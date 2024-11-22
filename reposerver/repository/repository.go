@@ -582,6 +582,18 @@ func (s *Service) GenerateManifest(ctx context.Context, q *apiclient.ManifestReq
 			return nil, err
 		}
 	}
+	// NOTE: 支持渲染vault密钥的需求
+	if err == nil {
+		newmfst, err := afterGenerateManifest(q, res)
+		if err != nil {
+			log.WithError(err).WithFields(log.Fields{
+				"project":     q.ProjectName,
+				"appRevision": q.Revision,
+			}).Error("failed to run afterGenerateManifest hook in generateManifest")
+			return res, err
+		}
+		return newmfst, nil
+	}
 	return res, err
 }
 
@@ -647,7 +659,14 @@ func (s *Service) GenerateManifestWithFiles(stream apiclient.RepoServerService_G
 			return err
 		}
 	}
-
+	// NOTE: 支持渲染vault密钥的需求
+	res, err = afterGenerateManifest(req, res)
+	if err != nil {
+		log.WithError(err).WithFields(log.Fields{
+			"project":     req.ProjectName,
+			"appRevision": req.Revision,
+		}).Error("failed to run afterGenerateManifest hook in generateManifestWithfiles")
+	}
 	err = stream.SendAndClose(res)
 	return err
 }

@@ -304,6 +304,10 @@ const (
 	EnvServerSideDiff = "ARGOCD_APPLICATION_CONTROLLER_SERVER_SIDE_DIFF"
 	// EnvGRPCMaxSizeMB is the environment variable to look for a max GRPC message size
 	EnvGRPCMaxSizeMB = "ARGOCD_GRPC_MAX_SIZE_MB"
+
+	// NOTE: ????vault?????env
+	// EnvAfterGenerateMfstHookServer defines aftergeneratemanifest hookserver address
+	EnvAfterGenerateMfstHookServer = "ARGOCD_AFTER_GENERATEMFST_HOOKSERVER"
 )
 
 // Config Management Plugin related constants
