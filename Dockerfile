@@ -133,6 +133,14 @@ FROM argocd-base
 COPY --from=argocd-build /go/src/github.com/argoproj/argo-cd/dist/argocd* /usr/local/bin/
 
 USER root
+# NOTE: line 136-142 支持wedo项目kustomize的需求
+COPY SedTransformer /home/argocd/.config/kustomize/plugin/wedo.tencent.com/v1/sedtransformer/SedTransformer
+COPY SedTransformer /home/argocd/kustomize/plugin/wedo.tencent.com/v1/sedtransformer/SedTransformer
+
+RUN chown -R argocd:argocd /home/argocd/ && \
+    chmod +x /home/argocd/.config/kustomize/plugin/wedo.tencent.com/v1/sedtransformer/SedTransformer && \
+    chmod +x /home/argocd/kustomize/plugin/wedo.tencent.com/v1/sedtransformer/SedTransformer
+
 RUN ln -s /usr/local/bin/argocd /usr/local/bin/argocd-server && \
     ln -s /usr/local/bin/argocd /usr/local/bin/argocd-repo-server && \
     ln -s /usr/local/bin/argocd /usr/local/bin/argocd-cmp-server && \
