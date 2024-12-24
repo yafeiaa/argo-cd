@@ -485,6 +485,11 @@ func (s *secretsRepositoryBackend) getRepositorySecret(repoURL, project string, 
 
 				foundSecret = secret
 			}
+
+			// 如果查询的 project 为空，则证明本次查询无法传递 project。仅判断 repo-url 是否一致即可
+			if project == "" {
+				return secret, nil
+			}
 		}
 	}
 
