@@ -24,6 +24,8 @@ const (
 
 // Default service addresses and URLS of Argo CD internal services
 const (
+	// DefaultArgoServerAddr is the gRPC address of the ARGO CD argo server
+	DefaultArgoServerAddr = "argocd-server:443"
 	// DefaultRepoServerAddr is the gRPC address of the Argo CD repo server
 	DefaultRepoServerAddr = "argocd-repo-server:8081"
 	// DefaultCommitServerAddr is the gRPC address of the Argo CD commit server
