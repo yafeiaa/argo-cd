@@ -20,6 +20,7 @@ argocd-application-controller [flags]
       --app-resync-jitter int                                     Maximum time period in seconds to add as a delay jitter for application resync.
       --app-state-cache-expiration duration                       Cache expiration for app state (default 1h0m0s)
       --application-namespaces strings                            List of additional namespaces that applications are allowed to be reconciled from
+      --argo-server string                                        Argo server address. (default "argocd-server:443")
       --as string                                                 Username to impersonate for the operation
       --as-group stringArray                                      Group to impersonate for the operation, this flag can be repeated to specify multiple groups.
       --as-uid string                                             UID to impersonate for the operation

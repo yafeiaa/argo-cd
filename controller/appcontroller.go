@@ -42,34 +42,34 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 
+	kubeerrors "k8s.io/apimachinery/pkg/api/errors"
+
 	commitclient "github.com/argoproj/argo-cd/v2/commitserver/apiclient"
 	"github.com/argoproj/argo-cd/v2/common"
 	statecache "github.com/argoproj/argo-cd/v2/controller/cache"
 	"github.com/argoproj/argo-cd/v2/controller/hydrator"
 	"github.com/argoproj/argo-cd/v2/controller/metrics"
 	"github.com/argoproj/argo-cd/v2/controller/sharding"
+	pkgapiclient "github.com/argoproj/argo-cd/v2/pkg/apiclient"
 	"github.com/argoproj/argo-cd/v2/pkg/apis/application"
 	appv1 "github.com/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
 	appclientset "github.com/argoproj/argo-cd/v2/pkg/client/clientset/versioned"
 	"github.com/argoproj/argo-cd/v2/pkg/client/informers/externalversions/application/v1alpha1"
 	applisters "github.com/argoproj/argo-cd/v2/pkg/client/listers/application/v1alpha1"
+	"github.com/argoproj/argo-cd/v2/pkg/ratelimiter"
 	"github.com/argoproj/argo-cd/v2/reposerver/apiclient"
 	"github.com/argoproj/argo-cd/v2/util/argo"
 	argodiff "github.com/argoproj/argo-cd/v2/util/argo/diff"
 	"github.com/argoproj/argo-cd/v2/util/argo/normalizers"
-	"github.com/argoproj/argo-cd/v2/util/env"
-	"github.com/argoproj/argo-cd/v2/util/stats"
-
-	kubeerrors "k8s.io/apimachinery/pkg/api/errors"
-
-	"github.com/argoproj/argo-cd/v2/pkg/ratelimiter"
 	appstatecache "github.com/argoproj/argo-cd/v2/util/cache/appstate"
 	"github.com/argoproj/argo-cd/v2/util/db"
+	"github.com/argoproj/argo-cd/v2/util/env"
 	"github.com/argoproj/argo-cd/v2/util/errors"
 	"github.com/argoproj/argo-cd/v2/util/glob"
 	"github.com/argoproj/argo-cd/v2/util/helm"
 	logutils "github.com/argoproj/argo-cd/v2/util/log"
 	settings_util "github.com/argoproj/argo-cd/v2/util/settings"
+	"github.com/argoproj/argo-cd/v2/util/stats"
 )
 
 const (
@@ -151,6 +151,8 @@ type ApplicationController struct {
 	dynamicClusterDistributionEnabled bool
 	deploymentInformer                informerv1.DeploymentInformer
 
+	appFinalizeChecker AppFinalizeChecker
+
 	hydrator *hydrator.Hydrator
 }
 
@@ -161,6 +163,7 @@ func NewApplicationController(
 	kubeClientset kubernetes.Interface,
 	applicationClientset appclientset.Interface,
 	repoClientset apiclient.Clientset,
+	argoServerClient pkgapiclient.Client,
 	commitClientset commitclient.Clientset,
 	argoCache *appstatecache.Cache,
 	kubectl kube.Kubectl,
@@ -310,6 +313,7 @@ func NewApplicationController(
 	}
 	stateCache := statecache.NewLiveStateCache(db, appInformer, ctrl.settingsMgr, kubectl, ctrl.metricsServer, ctrl.handleObjectUpdated, clusterSharding, argo.NewResourceTracking())
 	appStateManager := NewAppStateManager(db, applicationClientset, repoClientset, namespace, kubectl, ctrl.settingsMgr, stateCache, projInformer, ctrl.metricsServer, argoCache, ctrl.statusRefreshTimeout, argo.NewResourceTracking(), persistResourceHealth, repoErrorGracePeriod, serverSideDiff, ignoreNormalizerOpts)
+	ctrl.appFinalizeChecker = NewAppFinalizeChecker(argoServerClient)
 	ctrl.appInformer = appInformer
 	ctrl.appLister = appLister
 	ctrl.projInformer = projInformer
@@ -2086,6 +2090,13 @@ func (ctrl *ApplicationController) autoSync(app *appv1.Application, syncStatus *
 	// the last sync revision and the new sync revision is the same.
 	if app.Spec.HasMultipleSources() && !selfHeal && reflect.DeepEqual(app.Status.Sync.Revisions, syncStatus.Revisions) {
 		logCtx.Infof("Skipping auto-sync: selfHeal disabled and sync caused by object update")
+		return nil, 0
+	}
+	// Application controlled-by appset may trigger two-updates, when appset.template have dynamic revision.
+	// One is application self-sync, two is appset refresh application triggered app sync.
+	// When application auto-sync, check whether the application has reached the fina state.
+	if err := ctrl.appFinalizeChecker.CheckAppRefreshedByAppSet(logCtx, context.Background(), app); err != nil {
+		logCtx.Infof("Skipping auto-sync: app control by appset not update to latest: %s", err.Error())
 		return nil, 0
 	}
 

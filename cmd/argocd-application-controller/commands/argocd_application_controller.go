@@ -23,6 +23,7 @@ import (
 	"github.com/argoproj/argo-cd/v2/common"
 	"github.com/argoproj/argo-cd/v2/controller"
 	"github.com/argoproj/argo-cd/v2/controller/sharding"
+	pkgapiclient "github.com/argoproj/argo-cd/v2/pkg/apiclient"
 	"github.com/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
 	appclientset "github.com/argoproj/argo-cd/v2/pkg/client/clientset/versioned"
 	"github.com/argoproj/argo-cd/v2/pkg/ratelimiter"
@@ -57,6 +58,7 @@ func NewCommand() *cobra.Command {
 		appHardResyncPeriod              int64
 		appResyncJitter                  int64
 		repoErrorGracePeriod             int64
+		argoServerAddress                string
 		repoServerAddress                string
 		repoServerTimeoutSeconds         int
 		commitServerAddress              string
@@ -159,6 +161,10 @@ func NewCommand() *cobra.Command {
 			}
 
 			repoClientset := apiclient.NewRepoServerClientset(repoServerAddress, repoServerTimeoutSeconds, tlsConfig)
+			argoServerClient := pkgapiclient.NewClientOrDie(&pkgapiclient.ClientOptions{
+				ServerAddr: argoServerAddress,
+				Insecure:   true,
+			})
 
 			commitClientset := commitclient.NewCommitServerClientset(commitServerAddress)
 
@@ -188,6 +194,7 @@ func NewCommand() *cobra.Command {
 				kubeClient,
 				appClient,
 				repoClientset,
+				argoServerClient,
 				commitClientset,
 				cache,
 				kubectl,
@@ -253,6 +260,7 @@ func NewCommand() *cobra.Command {
 	command.Flags().Int64Var(&appResyncJitter, "app-resync-jitter", int64(env.ParseDurationFromEnv("ARGOCD_RECONCILIATION_JITTER", 0*time.Second, 0, math.MaxInt64).Seconds()), "Maximum time period in seconds to add as a delay jitter for application resync.")
 	command.Flags().Int64Var(&repoErrorGracePeriod, "repo-error-grace-period-seconds", int64(env.ParseDurationFromEnv("ARGOCD_REPO_ERROR_GRACE_PERIOD_SECONDS", defaultAppResyncPeriod*time.Second, 0, math.MaxInt64).Seconds()), "Grace period in seconds for ignoring consecutive errors while communicating with repo server.")
 	command.Flags().StringVar(&repoServerAddress, "repo-server", env.StringFromEnv("ARGOCD_APPLICATION_CONTROLLER_REPO_SERVER", common.DefaultRepoServerAddr), "Repo server address.")
+	command.Flags().StringVar(&argoServerAddress, "argo-server", env.StringFromEnv("ARGOCD_APPLICATION_CONTROLLER_ARGO_SERVER", common.DefaultArgoServerAddr), "Argo server address.")
 	command.Flags().IntVar(&repoServerTimeoutSeconds, "repo-server-timeout-seconds", env.ParseNumFromEnv("ARGOCD_APPLICATION_CONTROLLER_REPO_SERVER_TIMEOUT_SECONDS", 60, 0, math.MaxInt64), "Repo server RPC call timeout seconds.")
 	command.Flags().StringVar(&commitServerAddress, "commit-server", env.StringFromEnv("ARGOCD_APPLICATION_CONTROLLER_COMMIT_SERVER", common.DefaultCommitServerAddr), "Commit server address.")
 	command.Flags().IntVar(&statusProcessors, "status-processors", env.ParseNumFromEnv("ARGOCD_APPLICATION_CONTROLLER_STATUS_PROCESSORS", 20, 0, math.MaxInt32), "Number of application status processors")
