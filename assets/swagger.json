@@ -8499,6 +8499,14 @@
         },
         "syncResult": {
           "$ref": "#/definitions/v1alpha1SyncOperationResult"
+        },
+        "syncSpanID": {
+          "type": "string",
+          "title": "SyncSpanID contains the root span ID of the sync"
+        },
+        "syncTraceID": {
+          "type": "string",
+          "title": "SyncTraceID contains the trace ID of the sync"
         }
       }
     },
@@ -9451,6 +9459,14 @@
         "initiatedBy": {
           "$ref": "#/definitions/v1alpha1OperationInitiator"
         },
+        "message": {
+          "type": "string",
+          "title": "Message contains an informational or error message for this sync operation"
+        },
+        "phase": {
+          "type": "string",
+          "title": "Phase is the current phase of the operation"
+        },
         "revision": {
           "type": "string",
           "title": "Revision holds the revision the sync was performed against"
@@ -9471,6 +9487,10 @@
           "items": {
             "$ref": "#/definitions/v1alpha1ApplicationSource"
           }
+        },
+        "syncTraceID": {
+          "type": "string",
+          "title": "SyncTraceID holds the trace ID of the sync operation"
         }
       }
     },

@@ -1375,6 +1375,10 @@ type OperationState struct {
 	FinishedAt *metav1.Time `json:"finishedAt,omitempty" protobuf:"bytes,7,opt,name=finishedAt"`
 	// RetryCount contains time of operation retries
 	RetryCount int64 `json:"retryCount,omitempty" protobuf:"bytes,8,opt,name=retryCount"`
+	// SyncTraceID contains the trace ID of the sync
+	SyncTraceID string `json:"syncTraceID,omitempty" protobuf:"bytes,9,opt,name=syncTraceID"`
+	// SyncSpanID contains the root span ID of the sync
+	SyncSpanID string `json:"syncSpanID,omitempty" protobuf:"bytes,10,opt,name=syncSpanID"`
 }
 
 type Info struct {
@@ -1665,6 +1669,12 @@ type RevisionHistory struct {
 	Revisions []string `json:"revisions,omitempty" protobuf:"bytes,9,opt,name=revisions"`
 	// InitiatedBy contains information about who initiated the operations
 	InitiatedBy OperationInitiator `json:"initiatedBy,omitempty" protobuf:"bytes,10,opt,name=initiatedBy"`
+	// SyncTraceID holds the trace ID of the sync operation
+	SyncTraceID string `json:"syncTraceID,omitempty" protobuf:"bytes,11,opt,name=syncTraceID"`
+	// Phase is the current phase of the operation
+	Phase synccommon.OperationPhase `json:"phase,omitempty" protobuf:"bytes,13,opt,name=phase"`
+	// Message contains an informational or error message for this sync operation
+	Message string `json:"message,omitempty" protobuf:"bytes,12,opt,name=message"`
 }
 
 // ApplicationWatchEvent contains information about application change.

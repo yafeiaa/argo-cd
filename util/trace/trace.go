@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.6.1"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/credentials"
 )
 
@@ -75,4 +76,9 @@ func InitTracer(ctx context.Context, serviceName, otlpAddress string, otlpInsecu
 			log.Errorf("failed to stop exporter: %v", err)
 		}
 	}, nil
+}
+
+// GetTracer returns a tracer with the given name
+func GetTracer(name string) trace.Tracer {
+	return otel.GetTracerProvider().Tracer(name)
 }

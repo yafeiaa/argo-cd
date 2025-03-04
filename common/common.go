@@ -310,6 +310,8 @@ const (
 	// NOTE: ????vault?????env
 	// EnvAfterGenerateMfstHookServer defines aftergeneratemanifest hookserver address
 	EnvAfterGenerateMfstHookServer = "ARGOCD_AFTER_GENERATEMFST_HOOKSERVER"
+	// EnvSyncTracingEnabled defines the env var used to enable tracing for sync
+	EnvSyncTracingEnabled = "ARGOCD_SYNC_TRACING_ENABLED"
 )
 
 // Config Management Plugin related constants

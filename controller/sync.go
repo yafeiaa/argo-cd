@@ -17,6 +17,7 @@ import (
 	"github.com/argoproj/gitops-engine/pkg/sync"
 	"github.com/argoproj/gitops-engine/pkg/sync/common"
 	"github.com/argoproj/gitops-engine/pkg/utils/kube"
+	"github.com/argoproj/gitops-engine/pkg/utils/tracing"
 	jsonpatch "github.com/evanphx/json-patch"
 	log "github.com/sirupsen/logrus"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -32,13 +33,18 @@ import (
 	listersv1alpha1 "github.com/argoproj/argo-cd/v2/pkg/client/listers/application/v1alpha1"
 	"github.com/argoproj/argo-cd/v2/util/argo"
 	"github.com/argoproj/argo-cd/v2/util/argo/diff"
+	"github.com/argoproj/argo-cd/v2/util/env"
 	"github.com/argoproj/argo-cd/v2/util/glob"
 	logutils "github.com/argoproj/argo-cd/v2/util/log"
 	"github.com/argoproj/argo-cd/v2/util/lua"
 	"github.com/argoproj/argo-cd/v2/util/rand"
+	traceutil "github.com/argoproj/argo-cd/v2/util/trace"
 )
 
-var syncIdPrefix uint64 = 0
+var (
+	syncIdPrefix       uint64 = 0
+	syncTracingEnabled        = env.ParseBoolFromEnv(cdcommon.EnvSyncTracingEnabled, false)
+)
 
 const (
 	// EnvVarSyncWaveDelay is an environment variable which controls the delay in seconds between
@@ -384,6 +390,25 @@ func (m *appStateManager) SyncAppState(app *v1alpha1.Application, state *v1alpha
 	if syncOp.SyncOptions.HasOption("CreateNamespace=true") {
 		opts = append(opts, sync.WithNamespaceModifier(syncNamespace(app.Spec.SyncPolicy)))
 	}
+	var syncTracer tracing.Tracer
+	if syncTracingEnabled {
+		syncTracer = tracing.NewOpenTelemetryTracer(traceutil.GetTracer("application-sync-operation"))
+	} else {
+		// if tracing is not enabled, use a no-op tracer, no-op tracer does not create any spans
+		syncTracer = tracing.NopTracer{}
+	}
+	rootSyncTraceSpan := syncTracer.StartSpan("appOperation")
+	defer rootSyncTraceSpan.Finish()
+	syncTraceID := rootSyncTraceSpan.TraceID()
+	syncSpanID := rootSyncTraceSpan.SpanID()
+	// set traceid to operationState
+	if state.SyncTraceID == "" {
+		state.SyncTraceID = syncTraceID
+		state.SyncSpanID = syncSpanID
+	} else {
+		syncTraceID = state.SyncTraceID
+		syncSpanID = state.SyncSpanID
+	}
 
 	syncCtx, cleanup, err := sync.NewSyncContext(
 		compareResult.syncStatus.Revision,
@@ -393,6 +418,9 @@ func (m *appStateManager) SyncAppState(app *v1alpha1.Application, state *v1alpha
 		m.kubectl,
 		app.Spec.Destination.Namespace,
 		openAPISchema,
+		syncTracer,
+		syncTraceID,
+		syncSpanID,
 		opts...,
 	)
 	if err != nil {
@@ -400,7 +428,6 @@ func (m *appStateManager) SyncAppState(app *v1alpha1.Application, state *v1alpha
 		state.Message = fmt.Sprintf("failed to initialize sync context: %v", err)
 		return
 	}
-
 	defer cleanup()
 
 	start := time.Now()
@@ -452,8 +479,20 @@ func (m *appStateManager) SyncAppState(app *v1alpha1.Application, state *v1alpha
 
 	logEntry.WithField("duration", time.Since(start)).Info("sync/terminate complete")
 
-	if !syncOp.DryRun && len(syncOp.Resources) == 0 && state.Phase.Successful() {
-		err := m.persistRevisionHistory(app, compareResult.syncStatus.Revision, source, compareResult.syncStatus.Revisions, compareResult.syncStatus.ComparedTo.Sources, isMultiSourceRevision, state.StartedAt, state.Operation.InitiatedBy)
+	// NOTE: --story=121850163 部署历史增加部署失败/部分同步的记录
+	if !syncOp.DryRun {
+		// if !syncOp.DryRun && len(syncOp.Resources) == 0 && state.Phase.Successful() {
+		err := m.persistRevisionHistory(
+			app, compareResult.syncStatus.Revision,
+			source,
+			compareResult.syncStatus.Revisions,
+			compareResult.syncStatus.ComparedTo.Sources,
+			isMultiSourceRevision, state.StartedAt,
+			state.Operation.InitiatedBy,
+			rootSyncTraceSpan.TraceID(),
+			state.Phase,
+			state.Message,
+		)
 		if err != nil {
 			state.Phase = common.OperationError
 			state.Message = fmt.Sprintf("failed to record sync to history: %v", err)

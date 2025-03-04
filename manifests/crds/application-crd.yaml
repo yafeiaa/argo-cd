@@ -1990,6 +1990,13 @@ spec:
                             operation
                           type: string
                       type: object
+                    message:
+                      description: Message contains an informational or error message
+                        for this sync operation
+                      type: string
+                    phase:
+                      description: Phase is the current phase of the operation
+                      type: string
                     revision:
                       description: Revision holds the revision the sync was performed
                         against
@@ -2763,6 +2770,9 @@ spec:
                         - repoURL
                         type: object
                       type: array
+                    syncTraceID:
+                      description: SyncTraceID holds the trace ID of the sync operation
+                      type: string
                   required:
                   - deployedAt
                   - id
@@ -4609,6 +4619,9 @@ spec:
                     required:
                     - revision
                     type: object
+                  syncTraceID:
+                    description: SyncTraceID contains the trace ID of the sync
+                    type: string
                 required:
                 - operation
                 - phase

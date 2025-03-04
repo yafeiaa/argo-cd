@@ -1384,6 +1384,12 @@ message OperationState {
 
   // RetryCount contains time of operation retries
   optional int64 retryCount = 8;
+
+  // SyncTraceID contains the trace ID of the sync
+  optional string syncTraceID = 9;
+
+  // SyncSpanID contains the root span ID of the sync
+  optional string syncSpanID = 10;
 }
 
 message OptionalArray {
@@ -2064,6 +2070,15 @@ message RevisionHistory {
 
   // InitiatedBy contains information about who initiated the operations
   optional OperationInitiator initiatedBy = 10;
+
+  // SyncTraceID holds the trace ID of the sync operation
+  optional string syncTraceID = 11;
+
+  // Phase is the current phase of the operation
+  optional string phase = 13;
+
+  // Message contains an informational or error message for this sync operation
+  optional string message = 12;
 }
 
 // RevisionMetadata contains metadata for a specific revision in a Git repository
