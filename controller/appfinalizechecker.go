@@ -16,7 +16,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"regexp"
 
 	log "github.com/sirupsen/logrus"
@@ -97,16 +96,22 @@ func (c *appChecker) CheckAppRefreshedByAppSet(logCtx *log.Entry, ctx context.Co
 	if foundApp == nil {
 		return nil
 	}
-	if reflect.DeepEqual(foundApp.Spec, app.Spec) {
-		return nil
+	// NOTE: perhaps generated application not have destination name
+	foundApp.Spec.Destination.Name = app.Spec.Destination.Name
+	// WARNING: DeepEqual always return false, even if json.Marshal is equalled
+	//if reflect.DeepEqual(app.Spec, foundApp.Spec) {
+	//	return nil
+	//}
+	appBS, err := json.Marshal(app.Spec)
+	if err != nil {
+		return fmt.Errorf("error marshaling target_application %q: %w", app.Name, err)
 	}
 	foundAppBS, err := json.Marshal(foundApp.Spec)
 	if err != nil {
 		return fmt.Errorf("error marshaling found_application %q: %w", foundApp.Name, err)
 	}
-	appBS, err := json.Marshal(app.Spec)
-	if err != nil {
-		return fmt.Errorf("error marshaling target_application %q: %w", app.Name, err)
+	if string(appBS) == string(foundAppBS) {
+		return nil
 	}
 	return fmt.Errorf("application %q not update to latest, app.spec is inconsistent: original(%s), generated(%s)",
 		app.Name, string(appBS), string(foundAppBS))
