@@ -489,7 +489,7 @@ func (m *appStateManager) SyncAppState(app *v1alpha1.Application, state *v1alpha
 			compareResult.syncStatus.ComparedTo.Sources,
 			isMultiSourceRevision, state.StartedAt,
 			state.Operation.InitiatedBy,
-			rootSyncTraceSpan.TraceID(),
+			state.SyncTraceID,
 			state.Phase,
 			state.Message,
 		)
