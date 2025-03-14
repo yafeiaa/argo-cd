@@ -389,6 +389,40 @@ func (s *Service) runRepoOperation(
 
 		defer io.Close(closer)
 
+		refSourceClosers := make([]io.Closer, 0, len(refSources))
+		for _, refSource := range refSources {
+			keyData, err := json.Marshal(map[string]string{
+				"url":     git.NormalizeGitURL(refSource.Repo.Repo),
+				"project": refSource.Repo.Project,
+			})
+			if err != nil {
+				return err
+			}
+			repoPath := s.gitRepoPaths.GetPathIfExists(string(keyData))
+			if repoPath == "" {
+				return fmt.Errorf("failed to find repo %q", refSource.Repo.Repo)
+			}
+			refSourceGitClient, refSourceRevision, err := s.newClientResolveRevision(&refSource.Repo, refSource.TargetRevision, gitClientOpts)
+			if err != nil {
+				return err
+			}
+			refSourceCloser, err := s.repoLock.Lock(refSourceGitClient.Root(), refSourceRevision, settings.allowConcurrent, func() (goio.Closer, error) {
+				return s.checkoutRevision(refSourceGitClient, refSourceRevision, s.initConstants.SubmoduleEnabled)
+			})
+			if err != nil {
+				return err
+			}
+			refSourceClosers = append(refSourceClosers, refSourceCloser)
+		}
+
+		defer func() {
+			for _, refSourceCloser := range refSourceClosers {
+				if refSourceCloser != nil {
+					io.Close(refSourceCloser)
+				}
+			}
+		}()
+
 		if !s.initConstants.AllowOutOfBoundsSymlinks {
 			err := argopath.CheckOutOfBoundsSymlinks(gitClient.Root())
 			if err != nil {
