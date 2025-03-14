@@ -480,7 +480,7 @@ func (m *appStateManager) SyncAppState(app *v1alpha1.Application, state *v1alpha
 	logEntry.WithField("duration", time.Since(start)).Info("sync/terminate complete")
 
 	// NOTE: --story=121850163 部署历史增加部署失败/部分同步的记录
-	if !syncOp.DryRun {
+	if !syncOp.DryRun && !state.Phase.Running() {
 		// if !syncOp.DryRun && len(syncOp.Resources) == 0 && state.Phase.Successful() {
 		err := m.persistRevisionHistory(
 			app, compareResult.syncStatus.Revision,
