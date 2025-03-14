@@ -106,6 +106,9 @@ FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.23.3@sha256:d56c3e08fe
 WORKDIR /go/src/github.com/argoproj/argo-cd
 
 COPY go.* ./
+RUN go env -w GOPROXY="https://pelenli:od4QQiAp@goproxy.woa.com,direct"
+RUN go env -w GOPRIVATE=""
+RUN go env -w GOSUMDB="sum.woa.com+643d7a06+Ac5f5VOC4N8NUXdmhbm8pZSXIWfhek5JSmWdWrq7pLX4"
 RUN go mod download
 
 # Perform the build
