@@ -406,7 +406,7 @@ func (s *Service) runRepoOperation(
 			if err != nil {
 				return err
 			}
-			refSourceCloser, err := s.repoLock.Lock(refSourceGitClient.Root(), refSourceRevision, settings.allowConcurrent, func() (goio.Closer, error) {
+			refSourceCloser, err := s.repoLock.Lock(refSourceGitClient.Root(), refSourceRevision, true, func() (goio.Closer, error) {
 				return s.checkoutRevision(refSourceGitClient, refSourceRevision, s.initConstants.SubmoduleEnabled)
 			})
 			if err != nil {
