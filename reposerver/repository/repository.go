@@ -293,7 +293,7 @@ func (s *Service) runRepoOperation(
 	source *v1alpha1.ApplicationSource,
 	verifyCommit bool,
 	cacheFn func(cacheKey string, refSourceCommitSHAs cache.ResolvedRevisions, firstInvocation bool) (bool, error),
-	operation func(repoRoot, commitSHA, cacheKey string, ctxSrc operationContextSrc) error,
+	operation func(repoRoot, commitSHA, cacheKey string, repoRefs map[string]string, ctxSrc operationContextSrc) error,
 	settings operationSettings,
 	hasMultipleSources bool,
 	refSources map[string]*v1alpha1.RefTarget,
@@ -376,7 +376,7 @@ func (s *Service) runRepoOperation(
 				}
 			}
 		}
-		return operation(chartPath, revision, revision, func() (*operationContext, error) {
+		return operation(chartPath, revision, revision, repoRefs, func() (*operationContext, error) {
 			return &operationContext{chartPath, ""}, nil
 		})
 	} else {
@@ -427,7 +427,7 @@ func (s *Service) runRepoOperation(
 
 		// Here commitSHA refers to the SHA of the actual commit, whereas revision refers to the branch/tag name etc
 		// We use the commitSHA to generate manifests and store them in cache, and revision to retrieve them from cache
-		return operation(gitClient.Root(), commitSHA, revision, func() (*operationContext, error) {
+		return operation(gitClient.Root(), commitSHA, revision, repoRefs, func() (*operationContext, error) {
 			var signature string
 			if verifyCommit {
 				// When the revision is an annotated tag, we need to pass the unresolved revision (i.e. the tag name)
@@ -538,7 +538,7 @@ func (s *Service) GenerateManifest(ctx context.Context, q *apiclient.ManifestReq
 	tarConcluded := false
 	var promise *ManifestResponsePromise
 
-	operation := func(repoRoot, commitSHA, cacheKey string, ctxSrc operationContextSrc) error {
+	operation := func(repoRoot, commitSHA, cacheKey string, _ map[string]string, ctxSrc operationContextSrc) error {
 		// do not generate manifests if Path and Chart fields are not set for a source in Multiple Sources
 		if q.HasMultipleSources && q.ApplicationSource.Path == "" && q.ApplicationSource.Chart == "" {
 			log.WithFields(map[string]interface{}{
@@ -2084,7 +2084,7 @@ func (s *Service) GetAppDetails(ctx context.Context, q *apiclient.RepoServerAppD
 	res := &apiclient.RepoAppDetailsResponse{}
 
 	cacheFn := s.createGetAppDetailsCacheHandler(res, q)
-	operation := func(repoRoot, commitSHA, revision string, ctxSrc operationContextSrc) error {
+	operation := func(repoRoot, commitSHA, revision string, refRevisions map[string]string, ctxSrc operationContextSrc) error {
 		opContext, err := ctxSrc()
 		if err != nil {
 			return err
@@ -2197,7 +2197,7 @@ func (s *Service) GetAppDetails(ctx context.Context, q *apiclient.RepoServerAppD
 				return fmt.Errorf("failed to populate plugin app details: %w", err)
 			}
 		}
-		_ = s.cache.SetAppDetails(revision, q.Source, q.RefSources, res, v1alpha1.TrackingMethod(q.TrackingMethod), nil)
+		_ = s.cache.SetAppDetails(revision, q.Source, q.RefSources, res, v1alpha1.TrackingMethod(q.TrackingMethod), refRevisions)
 		return nil
 	}
 
@@ -2207,9 +2207,9 @@ func (s *Service) GetAppDetails(ctx context.Context, q *apiclient.RepoServerAppD
 	return res, err
 }
 
-func (s *Service) createGetAppDetailsCacheHandler(res *apiclient.RepoAppDetailsResponse, q *apiclient.RepoServerAppDetailsQuery) func(revision string, _ cache.ResolvedRevisions, _ bool) (bool, error) {
-	return func(revision string, _ cache.ResolvedRevisions, _ bool) (bool, error) {
-		err := s.cache.GetAppDetails(revision, q.Source, q.RefSources, res, v1alpha1.TrackingMethod(q.TrackingMethod), nil)
+func (s *Service) createGetAppDetailsCacheHandler(res *apiclient.RepoAppDetailsResponse, q *apiclient.RepoServerAppDetailsQuery) func(revision string, refRevisions cache.ResolvedRevisions, _ bool) (bool, error) {
+	return func(revision string, refRevisions cache.ResolvedRevisions, _ bool) (bool, error) {
+		err := s.cache.GetAppDetails(revision, q.Source, q.RefSources, res, v1alpha1.TrackingMethod(q.TrackingMethod), refRevisions)
 		if err == nil {
 			log.Infof("app details cache hit: %s/%s", revision, q.Source.Path)
 			return true, nil
