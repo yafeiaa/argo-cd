@@ -590,8 +590,17 @@ func LoggedIn(ctx context.Context) bool {
 
 // Username is a helper to extract a human readable username from a context
 func Username(ctx context.Context) string {
+	log.Infof("Entering Username function")
 	mapClaims, ok := mapClaims(ctx)
 	if !ok {
+		log.Warn("Could not get map claims from context in Username function")
+		return ""
+	}
+
+	sub := jwtutil.StringField(mapClaims, "sub")
+	log.Infof("User subject (sub) from token is: '%s'", sub)
+	if sub == common.ArgoCDAdminUsername {
+		log.Infof("Attempting impersonation for admin user '%s'", sub)
 		if md, ok := metadata.FromIncomingContext(ctx); ok {
 			headerName := "powerapp-username"
 			prefixedHeaderName := "grpcgateway-" + headerName
@@ -607,9 +616,7 @@ func Username(ctx context.Context) string {
 		} else {
 			log.Warnf("admin user '%s' attempted to impersonate, but could not get metadata from context", sub)
 		}
-		return ""
 	}
-	log.Infof("mapClaims: %v", mapClaims)
 
 	switch jwtutil.StringField(mapClaims, "iss") {
 	case SessionManagerClaimsIssuer:
