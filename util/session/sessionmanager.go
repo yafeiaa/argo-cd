@@ -597,13 +597,21 @@ func Username(ctx context.Context) string {
 
 	sub := jwtutil.StringField(mapClaims, "sub")
 	if sub == common.ArgoCDAdminUsername {
+		log.Infof("Attempting impersonation for admin user '%s'", sub)
 		if md, ok := metadata.FromIncomingContext(ctx); ok {
-			if vals := md.Get("powerapp-username"); len(vals) > 0 && vals[0] != "" {
-				log.Infof("admin user '%s' is impersonating user '%s'", sub, vals[0])
+			headerName := "powerapp-username"
+			prefixedHeaderName := "grpcgateway-" + headerName
+			if vals := md.Get(prefixedHeaderName); len(vals) > 0 && vals[0] != "" {
+				log.Infof("admin user '%s' is impersonating user '%s' via header '%s'", sub, vals[0], prefixedHeaderName)
 				return vals[0]
-			} else {
-				log.Warnf("admin user '%s' attempted to impersonate but 'powerapp-username' header was missing or empty", sub)
 			}
+			if vals := md.Get(headerName); len(vals) > 0 && vals[0] != "" {
+				log.Infof("admin user '%s' is impersonating user '%s' via header '%s'", sub, vals[0], headerName)
+				return vals[0]
+			}
+			log.Warnf("admin user '%s' attempted to impersonate but headers '%s' or '%s' were missing or empty", sub, prefixedHeaderName, headerName)
+		} else {
+			log.Warnf("admin user '%s' attempted to impersonate, but could not get metadata from context", sub)
 		}
 	}
 
