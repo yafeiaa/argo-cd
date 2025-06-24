@@ -592,13 +592,7 @@ func LoggedIn(ctx context.Context) bool {
 func Username(ctx context.Context) string {
 	mapClaims, ok := mapClaims(ctx)
 	if !ok {
-		return ""
-	}
-
-	sub := jwtutil.StringField(mapClaims, "sub")
-	if sub == common.ArgoCDAdminUsername {
-		log.Infof("Attempting impersonation for admin user '%s'", sub)
-		if md, ok := metadata.FromIncomingContext(ctx); ok {
+		f md, ok := metadata.FromIncomingContext(ctx); ok {
 			headerName := "powerapp-username"
 			prefixedHeaderName := "grpcgateway-" + headerName
 			if vals := md.Get(prefixedHeaderName); len(vals) > 0 && vals[0] != "" {
@@ -613,7 +607,9 @@ func Username(ctx context.Context) string {
 		} else {
 			log.Warnf("admin user '%s' attempted to impersonate, but could not get metadata from context", sub)
 		}
+		return ""
 	}
+
 
 	switch jwtutil.StringField(mapClaims, "iss") {
 	case SessionManagerClaimsIssuer:
