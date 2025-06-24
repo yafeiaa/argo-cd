@@ -599,10 +599,10 @@ func Username(ctx context.Context) string {
 	if sub == common.ArgoCDAdminUsername {
 		if md, ok := metadata.FromIncomingContext(ctx); ok {
 			if vals := md.Get("powerapp-username"); len(vals) > 0 && vals[0] != "" {
+				log.Infof("admin user '%s' is impersonating user '%s'", sub, vals[0])
 				return vals[0]
-			}
-			if vals := md.Get("powerapp-username"); len(vals) > 0 && vals[0] != "" {
-				return vals[0]
+			} else {
+				log.Warnf("admin user '%s' attempted to impersonate but 'powerapp-username' header was missing or empty", sub)
 			}
 		}
 	}
