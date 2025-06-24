@@ -592,7 +592,7 @@ func LoggedIn(ctx context.Context) bool {
 func Username(ctx context.Context) string {
 	mapClaims, ok := mapClaims(ctx)
 	if !ok {
-		f md, ok := metadata.FromIncomingContext(ctx); ok {
+		if md, ok := metadata.FromIncomingContext(ctx); ok {
 			headerName := "powerapp-username"
 			prefixedHeaderName := "grpcgateway-" + headerName
 			if vals := md.Get(prefixedHeaderName); len(vals) > 0 && vals[0] != "" {
@@ -609,7 +609,6 @@ func Username(ctx context.Context) string {
 		}
 		return ""
 	}
-
 
 	switch jwtutil.StringField(mapClaims, "iss") {
 	case SessionManagerClaimsIssuer:
