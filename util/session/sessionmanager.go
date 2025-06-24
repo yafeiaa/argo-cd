@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	"github.com/argoproj/argo-cd/v2/common"
@@ -593,11 +594,28 @@ func Username(ctx context.Context) string {
 	if !ok {
 		return ""
 	}
+
+	sub := jwtutil.StringField(mapClaims, "sub")
+	if sub == common.ArgoCDAdminUsername {
+		if md, ok := metadata.FromIncomingContext(ctx); ok {
+			if vals := md.Get("powerapp-username"); len(vals) > 0 && vals[0] != "" {
+				return vals[0]
+			}
+			if vals := md.Get("powerapp-username"); len(vals) > 0 && vals[0] != "" {
+				return vals[0]
+			}
+		}
+	}
+
 	switch jwtutil.StringField(mapClaims, "iss") {
 	case SessionManagerClaimsIssuer:
-		return jwtutil.StringField(mapClaims, "sub")
+		return sub
 	default:
-		return jwtutil.StringField(mapClaims, "email")
+		email := jwtutil.StringField(mapClaims, "email")
+		if email != "" {
+			return email
+		}
+		return sub
 	}
 }
 
