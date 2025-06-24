@@ -609,6 +609,7 @@ func Username(ctx context.Context) string {
 		}
 		return ""
 	}
+	log.Infof("mapClaims: %v", mapClaims)
 
 	switch jwtutil.StringField(mapClaims, "iss") {
 	case SessionManagerClaimsIssuer:
