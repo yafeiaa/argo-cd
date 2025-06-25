@@ -31,6 +31,7 @@ import (
 	oidcutil "github.com/argoproj/argo-cd/v2/util/oidc"
 	passwordutil "github.com/argoproj/argo-cd/v2/util/password"
 	"github.com/argoproj/argo-cd/v2/util/settings"
+	"google.golang.org/grpc/metadata"
 )
 
 // SessionManager generates and validates JWT tokens for login sessions.
@@ -591,6 +592,23 @@ func LoggedIn(ctx context.Context) bool {
 func Username(ctx context.Context) string {
 	mapClaims, ok := mapClaims(ctx)
 	if !ok {
+		// Fallback to check baggage from metadata if claims are not available
+		if md, ok := metadata.FromIncomingContext(ctx); ok {
+			if baggage, ok := md["baggage"]; ok && len(baggage) > 0 {
+				// baggage can be a list of comma-separated key-value pairs
+				// e.g., ["key1=val1,key2=val2", "key3=val3"]
+				for _, b := range baggage {
+					pairs := strings.Split(b, ",")
+					for _, pair := range pairs {
+						kv := strings.SplitN(strings.TrimSpace(pair), "=", 2)
+						if len(kv) == 2 && kv[0] == "X-User" {
+							log.Warnf("Found user '%s' in baggage metadata", kv[1])
+							return kv[1]
+						}
+					}
+				}
+			}
+		}
 		return ""
 	}
 	switch jwtutil.StringField(mapClaims, "iss") {
