@@ -179,6 +179,7 @@ func (h *helm) GetParameters(valuesFiles []pathutil.ResolvedFilePath, appPath, r
 	return output, nil
 }
 
+// 后面的数组会完全替换前面的数组，而不是合并
 func flatVals(input interface{}, output map[string]string, prefixes ...string) {
 	switch i := input.(type) {
 	case map[string]interface{}:
@@ -186,9 +187,23 @@ func flatVals(input interface{}, output map[string]string, prefixes ...string) {
 			flatVals(v, output, append(prefixes, k)...)
 		}
 	case []interface{}:
-		p := append([]string(nil), prefixes...)
+		arrayPrefix := strings.Join(prefixes, ".")
+
+		// 删除所有已存在的相同前缀的数组键
+		var keysToDelete []string
+		for key := range output {
+
+			if strings.HasPrefix(key, arrayPrefix+"[") {
+				keysToDelete = append(keysToDelete, key)
+			}
+		}
+		for _, key := range keysToDelete {
+			delete(output, key)
+		}
+
 		for j, v := range i {
-			flatVals(v, output, append(p[0:len(p)-1], fmt.Sprintf("%s[%v]", prefixes[len(p)-1], j))...)
+			arrayElementPrefix := fmt.Sprintf("%s[%d]", arrayPrefix, j)
+			flatVals(v, output, arrayElementPrefix)
 		}
 	default:
 		output[strings.Join(prefixes, ".")] = fmt.Sprintf("%v", i)

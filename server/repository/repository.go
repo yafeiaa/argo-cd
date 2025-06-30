@@ -377,12 +377,29 @@ func (s *Server) GetAppDetails(ctx context.Context, q *repositorypkg.RepoAppDeta
 	refSources := make(appsv1.RefTargetRevisionMapping)
 	if app != nil && app.Spec.HasMultipleSources() {
 		var revisions []string
-		for _, h := range app.Status.History {
-			if h.ID == int64(q.VersionId) {
-				if h.Revisions == nil {
-					continue
-				} else {
-					revisions = h.Revisions
+		appSources := app.Spec.GetSources()
+		isInAppSources := false
+		for _, s := range appSources {
+			if q.Source.Equals(&s) {
+				isInAppSources = true
+				break
+			}
+		}
+
+		if isInAppSources {
+			// 如果是请求当前application source，使用application sources中的目标修订版本
+			for _, s := range appSources {
+				revisions = append(revisions, s.TargetRevision)
+			}
+		} else {
+			// 否则从历史记录中获取修订版本
+			for _, h := range app.Status.History {
+				if h.ID == int64(q.VersionId) {
+					if h.Revisions == nil {
+						continue
+					} else {
+						revisions = h.Revisions
+					}
 				}
 			}
 		}
