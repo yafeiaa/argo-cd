@@ -96,7 +96,8 @@ func (vm VM) runLua(obj *unstructured.Unstructured, script string) (*lua.LState,
 	// preload our 'safe' version of the OS library. Allows the 'local os = require("os")' to work
 	l.PreloadModule(lua.OsLibName, SafeOsLoader)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	// NOTE: argocd规模较大，不确定什么原因导致经常超时，这里暂时加大为 3 秒
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	l.SetContext(ctx)
 	objectValue := decodeValue(l, obj.Object)
