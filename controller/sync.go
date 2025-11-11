@@ -265,7 +265,29 @@ func (m *appStateManager) SyncAppState(app *v1alpha1.Application, state *v1alpha
 	}
 	syncId := fmt.Sprintf("%05d-%s", syncIdPrefix, randSuffix)
 
-	logEntry := log.WithFields(log.Fields{"application": app.QualifiedName(), "syncId": syncId})
+	// Initialize tracer early to get traceID for all logs
+	var syncTracer tracing.Tracer
+	if syncTracingEnabled {
+		syncTracer = tracing.NewOpenTelemetryTracer(traceutil.GetTracer("application-sync-operation"))
+	} else {
+		// if tracing is not enabled, use a no-op tracer, no-op tracer does not create any spans
+		syncTracer = tracing.NopTracer{}
+	}
+	rootSyncTraceSpan := syncTracer.StartSpan("appOperation")
+	defer rootSyncTraceSpan.Finish()
+	syncTraceID := rootSyncTraceSpan.TraceID()
+	syncSpanID := rootSyncTraceSpan.SpanID()
+	// set traceid to operationState
+	if state.SyncTraceID == "" {
+		state.SyncTraceID = syncTraceID
+		state.SyncSpanID = syncSpanID
+	} else {
+		syncTraceID = state.SyncTraceID
+		syncSpanID = state.SyncSpanID
+	}
+
+	// Create logEntry with synctraceid from the beginning
+	logEntry := log.WithFields(log.Fields{"application": app.QualifiedName(), "syncId": syncId, "synctraceid": syncTraceID})
 	initialResourcesRes := make([]common.ResourceSyncResult, 0)
 	for i, res := range syncRes.Resources {
 		key := kube.ResourceKey{Group: res.Group, Kind: res.Kind, Namespace: res.Namespace, Name: res.Name}
@@ -315,19 +337,19 @@ func (m *appStateManager) SyncAppState(app *v1alpha1.Application, state *v1alpha
 
 	appLabelKey, err := m.settingsMgr.GetAppInstanceLabelKey()
 	if err != nil {
-		log.Errorf("Could not get appInstanceLabelKey: %v", err)
+		logEntry.Errorf("Could not get appInstanceLabelKey: %v", err)
 		return
 	}
 	installationID, err := m.settingsMgr.GetInstallationID()
 	if err != nil {
-		log.Errorf("Could not get installation ID: %v", err)
+		logEntry.Errorf("Could not get installation ID: %v", err)
 		return
 	}
 	trackingMethod := argo.GetTrackingMethod(m.settingsMgr)
 
 	impersonationEnabled, err := m.settingsMgr.IsImpersonationEnabled()
 	if err != nil {
-		log.Errorf("could not get impersonation feature flag: %v", err)
+		logEntry.Errorf("could not get impersonation feature flag: %v", err)
 		return
 	}
 	if impersonationEnabled {
@@ -390,26 +412,6 @@ func (m *appStateManager) SyncAppState(app *v1alpha1.Application, state *v1alpha
 	if syncOp.SyncOptions.HasOption("CreateNamespace=true") {
 		opts = append(opts, sync.WithNamespaceModifier(syncNamespace(app.Spec.SyncPolicy)))
 	}
-	var syncTracer tracing.Tracer
-	if syncTracingEnabled {
-		syncTracer = tracing.NewOpenTelemetryTracer(traceutil.GetTracer("application-sync-operation"))
-	} else {
-		// if tracing is not enabled, use a no-op tracer, no-op tracer does not create any spans
-		syncTracer = tracing.NopTracer{}
-	}
-	rootSyncTraceSpan := syncTracer.StartSpan("appOperation")
-	defer rootSyncTraceSpan.Finish()
-	syncTraceID := rootSyncTraceSpan.TraceID()
-	syncSpanID := rootSyncTraceSpan.SpanID()
-	// set traceid to operationState
-	if state.SyncTraceID == "" {
-		state.SyncTraceID = syncTraceID
-		state.SyncSpanID = syncSpanID
-	} else {
-		syncTraceID = state.SyncTraceID
-		syncSpanID = state.SyncSpanID
-	}
-
 	syncCtx, cleanup, err := sync.NewSyncContext(
 		compareResult.syncStatus.Revision,
 		reconciliationResult,
@@ -458,7 +460,7 @@ func (m *appStateManager) SyncAppState(app *v1alpha1.Application, state *v1alpha
 		})
 
 		if err != nil {
-			log.Errorf("using the original message since: %v", err)
+			logEntry.Errorf("using the original message since: %v", err)
 		} else {
 			res.Message = augmentedMsg
 		}
