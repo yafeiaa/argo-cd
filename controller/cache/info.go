@@ -22,6 +22,27 @@ import (
 	"github.com/argoproj/argo-cd/v2/util/resource"
 )
 
+// getInt64Field 安全地从 unstructured 对象中获取 int64 字段
+// 处理 YAML 解析器将数字解析为 float64 的情况
+func getInt64Field(un *unstructured.Unstructured, fields ...string) int64 {
+	val, found, err := unstructured.NestedFieldNoCopy(un.Object, fields...)
+	if !found || err != nil {
+		return 0
+	}
+	switch v := val.(type) {
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case float64:
+		return int64(v)
+	case int32:
+		return int64(v)
+	default:
+		return 0
+	}
+}
+
 func populateNodeInfo(un *unstructured.Unstructured, res *ResourceInfo, customLabels []string) {
 	gvk := un.GroupVersionKind()
 	revision := resource.GetRevision(un)
@@ -69,6 +90,20 @@ func populateNodeInfo(un *unstructured.Unstructured, res *ResourceInfo, customLa
 		case "ServiceEntry":
 			populateIstioServiceEntryInfo(un, res)
 		}
+	}
+
+	// NOTE: 支持workload的更新进度信息展示
+	switch {
+	case gvk.Group == "apps" && gvk.Kind == "Deployment":
+		populateDeploymentInfo(un, res)
+	case gvk.Group == "apps" && gvk.Kind == "StatefulSet":
+		populateStatefulSetInfo(un, res)
+	case gvk.Group == "apps" && gvk.Kind == "DaemonSet":
+		populateDaemonSetInfo(un, res)
+	case gvk.Group == "game.kruise.io" && gvk.Kind == "GameDeployment":
+		populateGameDeploymentInfo(un, res)
+	case gvk.Group == "game.kruise.io" && gvk.Kind == "GameStatefulSet":
+		populateGameStatefulSetInfo(un, res)
 	}
 }
 
@@ -497,4 +532,234 @@ func generateManifestHash(un *unstructured.Unstructured, ignores []v1alpha1.Reso
 
 func hash(data []byte) string {
 	return strconv.FormatUint(xxhash.Sum64(data), 16)
+}
+
+// populateDeploymentInfo 填充 Deployment 的更新进度信息
+func populateDeploymentInfo(un *unstructured.Unstructured, res *ResourceInfo) {
+	replicas := getInt64Field(un, "spec", "replicas")
+	if replicas == 0 {
+		replicas = 1
+	}
+
+	status, found, _ := unstructured.NestedMap(un.Object, "status")
+	if !found || status == nil {
+		res.Info = append(res.Info, v1alpha1.InfoItem{
+			Name:  "ready",
+			Value: fmt.Sprintf("0/%d", replicas),
+		})
+		return
+	}
+
+	updatedReplicas := getInt64Field(un, "status", "updatedReplicas")
+	readyReplicas := getInt64Field(un, "status", "readyReplicas")
+	availableReplicas := getInt64Field(un, "status", "availableReplicas")
+
+	var infoItems []v1alpha1.InfoItem
+
+	// 1. ready: readyReplicas/replicas
+	infoItems = append(infoItems, v1alpha1.InfoItem{
+		Name:  "ready",
+		Value: fmt.Sprintf("%d/%d", readyReplicas, replicas),
+	})
+
+	// 2. up-to-date: updatedReplicas
+	infoItems = append(infoItems, v1alpha1.InfoItem{
+		Name:  "up-to-date",
+		Value: fmt.Sprintf("%d", updatedReplicas),
+	})
+
+	// 3. available: availableReplicas
+	infoItems = append(infoItems, v1alpha1.InfoItem{
+		Name:  "available",
+		Value: fmt.Sprintf("%d", availableReplicas),
+	})
+
+	res.Info = append(res.Info, infoItems...)
+}
+// populateStatefulSetInfo 填充 StatefulSet 的更新进度信息
+func populateStatefulSetInfo(un *unstructured.Unstructured, res *ResourceInfo) {
+	replicas := getInt64Field(un, "spec", "replicas")
+	if replicas == 0 {
+		replicas = 1
+	}
+
+	status, found, _ := unstructured.NestedMap(un.Object, "status")
+	if !found || status == nil {
+		res.Info = append(res.Info, v1alpha1.InfoItem{
+			Name:  "ready",
+			Value: fmt.Sprintf("0/%d", replicas),
+		})
+		return
+	}
+
+	readyReplicas := getInt64Field(un, "status", "readyReplicas")
+	updatedReplicas := getInt64Field(un, "status", "updatedReplicas")
+
+	var infoItems []v1alpha1.InfoItem
+
+	// 1. ready: readyReplicas/replicas
+	infoItems = append(infoItems, v1alpha1.InfoItem{
+		Name:  "ready",
+		Value: fmt.Sprintf("%d/%d", readyReplicas, replicas),
+	})
+
+	// 2. up-to-date: updatedReplicas
+	infoItems = append(infoItems, v1alpha1.InfoItem{
+		Name:  "up-to-date",
+		Value: fmt.Sprintf("%d", updatedReplicas),
+	})
+
+	res.Info = append(res.Info, infoItems...)
+}
+
+// populateDaemonSetInfo 填充 DaemonSet 的更新进度信息
+func populateDaemonSetInfo(un *unstructured.Unstructured, res *ResourceInfo) {
+	status, found, _ := unstructured.NestedMap(un.Object, "status")
+	if !found || status == nil {
+		res.Info = append(res.Info, v1alpha1.InfoItem{
+			Name:  "desired",
+			Value: "0",
+		})
+		return
+	}
+
+	desiredNumberScheduled := getInt64Field(un, "status", "desiredNumberScheduled")
+	updatedNumberScheduled := getInt64Field(un, "status", "updatedNumberScheduled")
+	numberReady := getInt64Field(un, "status", "numberReady")
+	numberAvailable := getInt64Field(un, "status", "numberAvailable")
+
+	var infoItems []v1alpha1.InfoItem
+
+	// 1. desired: desiredNumberScheduled
+	infoItems = append(infoItems, v1alpha1.InfoItem{
+		Name:  "desired",
+		Value: fmt.Sprintf("%d", desiredNumberScheduled),
+	})
+
+	// 2. ready: numberReady
+	infoItems = append(infoItems, v1alpha1.InfoItem{
+		Name:  "ready",
+		Value: fmt.Sprintf("%d", numberReady),
+	})
+
+	// 3. up-to-date: updatedNumberScheduled
+	infoItems = append(infoItems, v1alpha1.InfoItem{
+		Name:  "up-to-date",
+		Value: fmt.Sprintf("%d", updatedNumberScheduled),
+	})
+
+	// 4. available: numberAvailable
+	infoItems = append(infoItems, v1alpha1.InfoItem{
+		Name:  "available",
+		Value: fmt.Sprint(numberAvailable),
+	})
+
+	res.Info = append(res.Info, infoItems...)
+}
+
+// populateGameDeploymentInfo 填充 GameDeployment 的更新进度信息
+func populateGameDeploymentInfo(un *unstructured.Unstructured, res *ResourceInfo) {
+	desiredReplicas := getInt64Field(un, "spec", "replicas")
+	if desiredReplicas == 0 {
+		desiredReplicas = 1
+	}
+
+	status, found, _ := unstructured.NestedMap(un.Object, "status")
+	if !found || status == nil {
+		res.Info = append(res.Info, v1alpha1.InfoItem{
+			Name:  "desired",
+			Value: fmt.Sprintf("%d", desiredReplicas),
+		})
+		return
+	}
+
+	totalReplicas := getInt64Field(un, "status", "replicas")
+	updatedReplicas := getInt64Field(un, "status", "updatedReplicas")
+	updatedReadyReplicas := getInt64Field(un, "status", "updatedReadyReplicas")
+	readyReplicas := getInt64Field(un, "status", "readyReplicas")
+
+	var infoItems []v1alpha1.InfoItem
+
+	// 1. desired: replicas from spec
+	infoItems = append(infoItems, v1alpha1.InfoItem{
+		Name:  "desired",
+		Value: fmt.Sprintf("%d", desiredReplicas),
+	})
+
+	// 2. updated: updatedReplicas
+	infoItems = append(infoItems, v1alpha1.InfoItem{
+		Name:  "updated",
+		Value: fmt.Sprintf("%d", updatedReplicas),
+	})
+
+	// 3. updated-ready: updatedReadyReplicas
+	infoItems = append(infoItems, v1alpha1.InfoItem{
+		Name:  "updated-ready",
+		Value: fmt.Sprintf("%d", updatedReadyReplicas),
+	})
+
+	// 4. ready: readyReplicas
+	infoItems = append(infoItems, v1alpha1.InfoItem{
+		Name:  "ready",
+		Value: fmt.Sprintf("%d", readyReplicas),
+	})
+
+	// 5. total: replicas from status
+	infoItems = append(infoItems, v1alpha1.InfoItem{
+		Name:  "total",
+		Value: fmt.Sprintf("%d", totalReplicas),
+	})
+
+	res.Info = append(res.Info, infoItems...)
+}
+
+// populateGameStatefulSetInfo 填充 GameStatefulSet 的更新进度信息
+func populateGameStatefulSetInfo(un *unstructured.Unstructured, res *ResourceInfo) {
+	status, found, _ := unstructured.NestedMap(un.Object, "status")
+	if !found || status == nil {
+		res.Info = append(res.Info, v1alpha1.InfoItem{
+			Name:  "replicas",
+			Value: "0",
+		})
+		return
+	}
+
+	statusReplicas := getInt64Field(un, "status", "replicas")
+	readyReplicas := getInt64Field(un, "status", "readyReplicas")
+	currentReplicas := getInt64Field(un, "status", "currentReplicas")
+	updatedReplicas := getInt64Field(un, "status", "updatedReplicas")
+	updatedReadyReplicas := getInt64Field(un, "status", "updatedReadyReplicas")
+	var infoItems []v1alpha1.InfoItem
+
+	// 1. replicas: replicas from status
+	infoItems = append(infoItems, v1alpha1.InfoItem{
+		Name:  "replicas",
+		Value: fmt.Sprintf("%d", statusReplicas),
+	})
+
+	// 2. ready-replicas: readyReplicas
+	infoItems = append(infoItems, v1alpha1.InfoItem{
+		Name:  "ready-replicas",
+		Value: fmt.Sprintf("%d", readyReplicas),
+	})
+
+	// 3. current-replicas: currentReplicas
+	infoItems = append(infoItems, v1alpha1.InfoItem{
+		Name:  "current-replicas",
+		Value: fmt.Sprintf("%d", currentReplicas),
+	})
+
+	// 4. updated-replicas: updatedReplicas
+	infoItems = append(infoItems, v1alpha1.InfoItem{
+		Name:  "updated-replicas",
+		Value: fmt.Sprintf("%d", updatedReplicas),
+	})
+
+	// 5. updated-ready-replicas: updatedReadyReplicas
+	infoItems = append(infoItems, v1alpha1.InfoItem{
+		Name:  "updated-ready-replicas",
+		Value: fmt.Sprintf("%d", updatedReadyReplicas),
+	})
+
+	res.Info = append(res.Info, infoItems...)
 }
