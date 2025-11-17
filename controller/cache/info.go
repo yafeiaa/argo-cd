@@ -100,9 +100,9 @@ func populateNodeInfo(un *unstructured.Unstructured, res *ResourceInfo, customLa
 		populateStatefulSetInfo(un, res)
 	case gvk.Group == "apps" && gvk.Kind == "DaemonSet":
 		populateDaemonSetInfo(un, res)
-	case gvk.Group == "game.kruise.io" && gvk.Kind == "GameDeployment":
+	case gvk.Kind == "GameDeployment":
 		populateGameDeploymentInfo(un, res)
-	case gvk.Group == "game.kruise.io" && gvk.Kind == "GameStatefulSet":
+	case gvk.Kind == "GameStatefulSet":
 		populateGameStatefulSetInfo(un, res)
 	}
 }
