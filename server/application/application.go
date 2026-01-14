@@ -1,11 +1,15 @@
 package application
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"net/http"
+	"os"
 	"reflect"
 	"sort"
 	"strconv"
@@ -1914,6 +1918,86 @@ func isTheSelectedOne(currentNode *appv1.ResourceNode, q *application.Applicatio
 	return false
 }
 
+// ManifestReplaceResponse 表示来自 manifest hook server 的响应
+type ManifestReplaceResponse struct {
+	Manifests []string `json:"manifests"`
+	Message   string   `json:"message"`
+}
+
+// afterSyncManifestHookServer 从环境变量中获取 hook server 地址
+func afterSyncManifestHookServer() string {
+	return os.Getenv(argocommon.EnvAfterGenerateMfstHookServer)
+}
+
+// afterSyncManifest 处理本地同步的 manifests，通过 hook server 进行密钥渲染
+// 此函数用于支持 --local 同步时的密钥渲染需求（如 vault 密钥等）
+// 与 reposerver 中的 afterGenerateManifest 功能类似，但专门处理本地同步场景
+// 注意：此功能在 server 端实现，而不是在 controller 端，原因如下：
+// 1. Controller 需要处理大量应用的状态同步，在此处插入 HTTP 调用会严重影响性能
+// 2. Server 端只在用户主动触发同步时执行，频率较低，适合进行外部服务调用
+// 3. 可以避免在 controller 的循环处理中引入网络延迟和失败重试的复杂性
+func afterSyncManifest(manifests []string, appName, projectName string, repos []string) ([]string, error) {
+	if manifests == nil || len(manifests) == 0 {
+		log.Warnf("manifests is empty, skipping afterSyncManifest hook")
+		return manifests, nil
+	}
+
+	addr := afterSyncManifestHookServer()
+	if addr == "" {
+		// Hook server 未配置时，直接返回原始 manifests
+		return manifests, nil
+	}
+
+	// 构建发送给 hook server 的请求数据
+	data := map[string]interface{}{
+		"manifests": manifests,
+		"project":   projectName,
+		"appName":   appName,
+		"repos":     repos,
+	}
+
+	body, err := json.Marshal(data)
+	if err != nil {
+		return manifests, fmt.Errorf("failed to marshal manifest data: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, addr, bytes.NewReader(body))
+	if err != nil {
+		return manifests, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return manifests, fmt.Errorf("failed to call hook server: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return manifests, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return manifests, fmt.Errorf("hook server returned status code %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	response := ManifestReplaceResponse{}
+	err = json.Unmarshal(respBody, &response)
+	if err != nil {
+		return manifests, fmt.Errorf("failed to unmarshal response body: %w, body: %s", err, string(respBody))
+	}
+
+	if response.Manifests == nil {
+		// Hook server 返回空 manifests 时，使用原始 manifests
+		log.Warnf("hook server returned empty manifests, using original manifests")
+		return manifests, nil
+	}
+
+	// 返回经过 hook server 处理后的 manifests（已渲染密钥）
+	return response.Manifests, nil
+}
+
 // Sync syncs an application to its target state
 func (s *Server) Sync(ctx context.Context, syncReq *application.ApplicationSyncRequest) (*appv1.Application, error) {
 	a, proj, err := s.getApplicationEnforceRBACClient(ctx, rbacpolicy.ActionGet, syncReq.GetProject(), syncReq.GetAppNamespace(), syncReq.GetName(), "")
@@ -1978,6 +2062,42 @@ func (s *Server) Sync(ctx context.Context, syncReq *application.ApplicationSyncR
 			}
 		}
 	}
+
+	// 处理本地同步的 manifests，支持 --local 同步时的密钥渲染需求（如 vault 密钥等）
+	// 通过 hook server 对 manifests 进行后处理，实现密钥的动态渲染
+	// 注意：此处理在 server 端执行，而不是在 controller 端，原因如下：
+	// 1. Controller 需要持续监控和处理大量应用的状态同步，在此处插入 HTTP 调用会严重影响性能
+	// 2. Server 端只在用户主动触发同步时执行，频率较低，适合进行外部服务调用
+	// 3. 可以避免在 controller 的循环处理中引入网络延迟和失败重试的复杂性，保持 controller 的高效运行
+	processedManifests := syncReq.Manifests
+	if syncReq.Manifests != nil {
+		// 收集应用的 repository URLs，用于传递给 hook server
+		repos := []string{}
+		if a.Spec.HasMultipleSources() {
+			for _, source := range a.Spec.Sources {
+				repos = append(repos, source.RepoURL)
+			}
+		} else {
+			source := a.Spec.GetSource()
+			if !source.IsZero() {
+				repos = append(repos, source.RepoURL)
+			}
+		}
+
+		// 调用 hook server 对 manifests 进行密钥渲染处理
+		modifiedManifests, err := afterSyncManifest(syncReq.Manifests, a.Name, proj.Name, repos)
+		if err != nil {
+			log.WithError(err).WithFields(log.Fields{
+				"project": proj.Name,
+				"appName": a.Name,
+			}).Error("failed to run afterSyncManifest hook in Sync")
+			// Hook 调用失败时，继续使用原始 manifests，避免阻塞同步流程
+			processedManifests = syncReq.Manifests
+		} else {
+			processedManifests = modifiedManifests
+		}
+	}
+
 	op := appv1.Operation{
 		Sync: &appv1.SyncOperation{
 			Revision:     revision,
@@ -1986,7 +2106,7 @@ func (s *Server) Sync(ctx context.Context, syncReq *application.ApplicationSyncR
 			SyncOptions:  syncOptions,
 			SyncStrategy: syncReq.Strategy,
 			Resources:    resources,
-			Manifests:    syncReq.Manifests,
+			Manifests:    processedManifests,
 			Sources:      a.Spec.Sources,
 			Revisions:    sourceRevisions,
 		},
