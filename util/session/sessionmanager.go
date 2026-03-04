@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	"github.com/argoproj/argo-cd/v3/server/rbacpolicy"
@@ -616,6 +617,20 @@ func LoggedIn(ctx context.Context) bool {
 func Username(ctx context.Context) string {
 	mapClaims, ok := mapClaims(ctx)
 	if !ok {
+		if md, ok := metadata.FromIncomingContext(ctx); ok {
+			if baggage, ok := md["baggage"]; ok && len(baggage) > 0 {
+				for _, b := range baggage {
+					pairs := strings.Split(b, ",")
+					for _, pair := range pairs {
+						kv := strings.SplitN(strings.TrimSpace(pair), "=", 2)
+						if len(kv) == 2 && kv[0] == "X-User" {
+							log.Warnf("Found user '%s' in baggage metadata", kv[1])
+							return kv[1]
+						}
+					}
+				}
+			}
+		}
 		return ""
 	}
 	switch jwtutil.StringField(mapClaims, "iss") {

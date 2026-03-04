@@ -22,6 +22,7 @@ import (
 	commitclient "github.com/argoproj/argo-cd/v3/commitserver/apiclient"
 	"github.com/argoproj/argo-cd/v3/common"
 	"github.com/argoproj/argo-cd/v3/controller"
+	pkgapiclient "github.com/argoproj/argo-cd/v3/pkg/apiclient"
 	"github.com/argoproj/argo-cd/v3/controller/sharding"
 	"github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	appclientset "github.com/argoproj/argo-cd/v3/pkg/client/clientset/versioned"
@@ -97,6 +98,7 @@ func NewCommand() *cobra.Command {
 		// argocd k8s event logging flag
 		enableK8sEvent  []string
 		hydratorEnabled bool
+		argoServerAddress string
 	)
 	command := cobra.Command{
 		Use:               cliName,
@@ -188,12 +190,19 @@ func NewCommand() *cobra.Command {
 					Cap:      time.Duration(selfHealBackoffCapSeconds) * time.Second,
 				}
 			}
+			argoServerClient, err := pkgapiclient.NewClient(&pkgapiclient.ClientOptions{
+				ServerAddr: argoServerAddress,
+				Insecure:   true,
+				PlainText:  true,
+			})
+			errors.CheckError(err)
 			appController, err = controller.NewApplicationController(
 				namespace,
 				settingsMgr,
 				kubeClient,
 				appClient,
 				repoClientset,
+				argoServerClient,
 				commitClientset,
 				cache,
 				kubectl,
@@ -262,6 +271,7 @@ func NewCommand() *cobra.Command {
 	command.Flags().Int64Var(&repoErrorGracePeriod, "repo-error-grace-period-seconds", int64(env.ParseDurationFromEnv("ARGOCD_REPO_ERROR_GRACE_PERIOD_SECONDS", defaultRepoErrorGracePeriod*time.Second, 0, math.MaxInt64).Seconds()), "Grace period in seconds for ignoring consecutive errors while communicating with repo server.")
 	command.Flags().StringVar(&repoServerAddress, "repo-server", env.StringFromEnv("ARGOCD_APPLICATION_CONTROLLER_REPO_SERVER", common.DefaultRepoServerAddr), "Repo server address.")
 	command.Flags().IntVar(&repoServerTimeoutSeconds, "repo-server-timeout-seconds", env.ParseNumFromEnv("ARGOCD_APPLICATION_CONTROLLER_REPO_SERVER_TIMEOUT_SECONDS", 60, 0, math.MaxInt64), "Repo server RPC call timeout seconds.")
+	command.Flags().StringVar(&argoServerAddress, "argo-server", env.StringFromEnv("ARGOCD_APPLICATION_CONTROLLER_SERVER", common.DefaultArgoServerAddr), "Argo CD server address.")
 	command.Flags().StringVar(&commitServerAddress, "commit-server", env.StringFromEnv("ARGOCD_APPLICATION_CONTROLLER_COMMIT_SERVER", common.DefaultCommitServerAddr), "Commit server address.")
 	command.Flags().IntVar(&statusProcessors, "status-processors", env.ParseNumFromEnv("ARGOCD_APPLICATION_CONTROLLER_STATUS_PROCESSORS", 20, 0, math.MaxInt32), "Number of application status processors")
 	command.Flags().IntVar(&operationProcessors, "operation-processors", env.ParseNumFromEnv("ARGOCD_APPLICATION_CONTROLLER_OPERATION_PROCESSORS", 10, 0, math.MaxInt32), "Number of application operation processors")

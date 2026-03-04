@@ -25,6 +25,8 @@ const (
 
 // Default service addresses and URLS of Argo CD internal services
 const (
+	// DefaultArgoServerAddr is the gRPC address of the Argo CD argo server
+	DefaultArgoServerAddr = "argocd-server:443"
 	// DefaultRepoServerAddr is the gRPC address of the Argo CD repo server
 	DefaultRepoServerAddr = "argocd-repo-server:8081"
 	// DefaultCommitServerAddr is the gRPC address of the Argo CD commit server
@@ -322,6 +324,12 @@ const (
 	EnvServerSideDiff = "ARGOCD_APPLICATION_CONTROLLER_SERVER_SIDE_DIFF"
 	// EnvGRPCMaxSizeMB is the environment variable to look for a max GRPC message size
 	EnvGRPCMaxSizeMB = "ARGOCD_GRPC_MAX_SIZE_MB"
+
+	// NOTE: 支持渲染vault密钥的env
+	// EnvAfterGenerateMfstHookServer defines aftergeneratemanifest hookserver address for vault plugin
+	EnvAfterGenerateMfstHookServer = "ARGOCD_AFTER_GENERATEMFST_HOOKSERVER"
+	// EnvSyncTracingEnabled defines the env var used to enable tracing for sync
+	EnvSyncTracingEnabled = "ARGOCD_SYNC_TRACING_ENABLED"
 )
 
 // Config Management Plugin related constants

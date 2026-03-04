@@ -321,7 +321,7 @@ func (s *Service) runRepoOperation(
 	source *v1alpha1.ApplicationSource,
 	verifyCommit bool,
 	cacheFn func(cacheKey string, refSourceCommitSHAs cache.ResolvedRevisions, firstInvocation bool) (bool, error),
-	operation func(repoRoot, commitSHA, cacheKey string, ctxSrc operationContextSrc) error,
+	operation func(repoRoot, commitSHA, cacheKey string, repoRefs map[string]string, ctxSrc operationContextSrc) error,
 	settings operationSettings,
 	hasMultipleSources bool,
 	refSources map[string]*v1alpha1.RefTarget,
@@ -410,7 +410,7 @@ func (s *Service) runRepoOperation(
 			return err
 		}
 
-		return operation(ociPath, revision, revision, func() (*operationContext, error) {
+		return operation(ociPath, revision, revision, repoRefs, func() (*operationContext, error) {
 			return &operationContext{appPath, ""}, nil
 		})
 	} else if source.IsHelm() {
@@ -445,7 +445,7 @@ func (s *Service) runRepoOperation(
 				return err
 			}
 		}
-		return operation(chartPath, revision, revision, func() (*operationContext, error) {
+		return operation(chartPath, revision, revision, repoRefs, func() (*operationContext, error) {
 			return &operationContext{chartPath, ""}, nil
 		})
 	}
@@ -495,7 +495,7 @@ func (s *Service) runRepoOperation(
 
 	// Here commitSHA refers to the SHA of the actual commit, whereas revision refers to the branch/tag name etc
 	// We use the commitSHA to generate manifests and store them in cache, and revision to retrieve them from cache
-	return operation(gitClient.Root(), commitSHA, revision, func() (*operationContext, error) {
+	return operation(gitClient.Root(), commitSHA, revision, repoRefs, func() (*operationContext, error) {
 		var signature string
 		if verifyCommit {
 			// When the revision is an annotated tag, we need to pass the unresolved revision (i.e. the tag name)
@@ -606,7 +606,7 @@ func (s *Service) GenerateManifest(ctx context.Context, q *apiclient.ManifestReq
 	tarConcluded := false
 	var promise *ManifestResponsePromise
 
-	operation := func(repoRoot, commitSHA, cacheKey string, ctxSrc operationContextSrc) error {
+	operation := func(repoRoot, commitSHA, cacheKey string, _ map[string]string, ctxSrc operationContextSrc) error {
 		// do not generate manifests if Path and Chart fields are not set for a source in Multiple Sources
 		if q.HasMultipleSources && q.ApplicationSource.Path == "" && q.ApplicationSource.Chart == "" {
 			log.WithFields(map[string]any{
@@ -649,6 +649,18 @@ func (s *Service) GenerateManifest(ctx context.Context, q *apiclient.ManifestReq
 		case err := <-promise.errCh:
 			return nil, err
 		}
+	}
+	// NOTE: 支持渲染vault密钥的需求
+	if err == nil {
+		newmfst, hookErr := afterGenerateManifest(q, res)
+		if hookErr != nil {
+			log.WithError(hookErr).WithFields(log.Fields{
+				"project":     q.ProjectName,
+				"appRevision": q.Revision,
+			}).Error("failed to run afterGenerateManifest hook in generateManifest")
+			return res, hookErr
+		}
+		return newmfst, nil
 	}
 	return res, err
 }
@@ -715,6 +727,14 @@ func (s *Service) GenerateManifestWithFiles(stream apiclient.RepoServerService_G
 		}
 	}
 
+	// NOTE: 支持渲染vault密钥的需求
+	res, err = afterGenerateManifest(req, res)
+	if err != nil {
+		log.WithError(err).WithFields(log.Fields{
+			"project":     req.ProjectName,
+			"appRevision": req.Revision,
+		}).Error("failed to run afterGenerateManifest hook in generateManifestWithFiles")
+	}
 	err = stream.SendAndClose(res)
 	return err
 }
@@ -834,9 +854,11 @@ func (s *Service) runManifestGenAsync(ctx context.Context, repoRoot, commitSHA, 
 							ch.errCh <- fmt.Errorf("cannot reference a different revision of the same repository (%s references %q which resolves to %q while the application references %q which resolves to %q)", refVar, refSourceMapping.TargetRevision, referencedCommitSHA, q.Revision, commitSHA)
 							return
 						}
+						log.Infof("manifest 的 ref Lock 开始: %s", gitClient.Root())
 						closer, err := s.repoLock.Lock(gitClient.Root(), referencedCommitSHA, true, func() (goio.Closer, error) {
 							return s.checkoutRevision(gitClient, referencedCommitSHA, s.initConstants.SubmoduleEnabled)
 						})
+						log.Infof("manifest 的 ref Lock 结束: %s, %v", gitClient.Root(), err)
 						if err != nil {
 							log.Errorf("failed to acquire lock for referenced source %s", normalizedRepoURL)
 							ch.errCh <- err
@@ -2174,10 +2196,95 @@ func (s *Service) GetAppDetails(ctx context.Context, q *apiclient.RepoServerAppD
 	res := &apiclient.RepoAppDetailsResponse{}
 
 	cacheFn := s.createGetAppDetailsCacheHandler(res, q)
-	operation := func(repoRoot, commitSHA, revision string, ctxSrc operationContextSrc) error {
+	operation := func(repoRoot, commitSHA, revision string, refRevisions map[string]string, ctxSrc operationContextSrc) error {
 		opContext, err := ctxSrc()
 		if err != nil {
 			return err
+		}
+
+		// 对于多来源的应用，获取 AppDetails 时需要先初始化下 refSources 对应的仓库
+		// 参考方法: runManifestGenAsync
+		if q.Source.Helm != nil {
+			refFileParams := make([]string, 0)
+			for _, fileParam := range q.Source.Helm.FileParameters {
+				refFileParams = append(refFileParams, fileParam.Path)
+			}
+			refCandidates := append(q.Source.Helm.ValueFiles, refFileParams...)
+			// Checkout every one of the referenced sources to the target revision before generating Manifests
+			repoRefs := make(map[string]repoRef)
+			for _, valueFile := range refCandidates {
+				if !strings.HasPrefix(valueFile, "$") {
+					continue
+				}
+				refVar := strings.Split(valueFile, "/")[0]
+
+				refSourceMapping, ok := q.RefSources[refVar]
+				if !ok {
+					if len(q.RefSources) == 0 {
+						return fmt.Errorf("source referenced %q, but no source has a 'ref' field defined", refVar)
+					}
+					refKeys := make([]string, 0)
+					for refKey := range q.RefSources {
+						refKeys = append(refKeys, refKey)
+					}
+					return fmt.Errorf("source referenced %q, which is not one of the available sources (%s)", refVar, strings.Join(refKeys, ", "))
+				}
+				if refSourceMapping.Chart != "" {
+					return fmt.Errorf("source has a 'chart' field defined, but Helm charts are not yet not supported for 'ref' sources")
+				}
+				normalizedRepoURL := git.NormalizeGitURL(refSourceMapping.Repo.Repo)
+				closer, ok := repoRefs[normalizedRepoURL]
+				if ok {
+					if closer.revision != refSourceMapping.TargetRevision {
+						return fmt.Errorf("cannot reference multiple revisions for the same repository (%s references %q while %s references %q)", refVar, refSourceMapping.TargetRevision, closer.key, closer.revision)
+					}
+				} else {
+					gitClient, referencedCommitSHA, err := s.newClientResolveRevision(&refSourceMapping.Repo, refSourceMapping.TargetRevision, git.WithCache(s.cache, !q.NoRevisionCache && !q.NoCache))
+					if err != nil {
+						log.Errorf("Failed to get git client for repo %s: %v", refSourceMapping.Repo.Repo, err)
+						return fmt.Errorf("failed to get git client for repo %s", refSourceMapping.Repo.Repo)
+					}
+
+					if git.NormalizeGitURL(q.Source.RepoURL) == normalizedRepoURL && commitSHA != referencedCommitSHA {
+						return fmt.Errorf("cannot reference a different revision of the same repository (%s references %q which resolves to %q while the application references %q which resolves to %q)",
+							refVar, refSourceMapping.TargetRevision, referencedCommitSHA, q.Source.TargetRevision, commitSHA)
+					}
+					closer, err := s.repoLock.Lock(gitClient.Root(), referencedCommitSHA, true, func() (goio.Closer, error) {
+						return s.checkoutRevision(gitClient, referencedCommitSHA, s.initConstants.SubmoduleEnabled)
+					})
+					if err != nil {
+						log.Errorf("failed to acquire lock for referenced source %s", normalizedRepoURL)
+						return err
+					}
+					defer func(closer goio.Closer) {
+						err := closer.Close()
+						if err != nil {
+							log.Errorf("Failed to release repo lock: %v", err)
+						}
+					}(closer)
+
+					// Symlink check must happen after acquiring lock.
+					if !s.initConstants.AllowOutOfBoundsSymlinks {
+						err := apppathutil.CheckOutOfBoundsSymlinks(gitClient.Root())
+						if err != nil {
+							oobError := &apppathutil.OutOfBoundsSymlinkError{}
+							if errors.As(err, &oobError) {
+								log.WithFields(log.Fields{
+									common.SecurityField: common.SecurityHigh,
+									"repo":               refSourceMapping.Repo,
+									"revision":           refSourceMapping.TargetRevision,
+									"file":               oobError.File,
+								}).Warn("repository contains out-of-bounds symlink")
+								return fmt.Errorf("repository contains out-of-bounds symlinks. file: %s", oobError.File)
+							} else {
+								return err
+							}
+						}
+					}
+
+					repoRefs[normalizedRepoURL] = repoRef{revision: refSourceMapping.TargetRevision, commitSHA: referencedCommitSHA, key: refVar}
+				}
+			}
 		}
 
 		env := newEnvRepoQuery(q, revision)
@@ -2203,7 +2310,7 @@ func (s *Service) GetAppDetails(ctx context.Context, q *apiclient.RepoServerAppD
 				return fmt.Errorf("failed to populate plugin app details: %w", err)
 			}
 		}
-		_ = s.cache.SetAppDetails(revision, q.Source, q.RefSources, res, v1alpha1.TrackingMethod(q.TrackingMethod), nil)
+		_ = s.cache.SetAppDetails(revision, q.Source, q.RefSources, res, v1alpha1.TrackingMethod(q.TrackingMethod), refRevisions)
 		return nil
 	}
 
@@ -2213,9 +2320,9 @@ func (s *Service) GetAppDetails(ctx context.Context, q *apiclient.RepoServerAppD
 	return res, err
 }
 
-func (s *Service) createGetAppDetailsCacheHandler(res *apiclient.RepoAppDetailsResponse, q *apiclient.RepoServerAppDetailsQuery) func(revision string, _ cache.ResolvedRevisions, _ bool) (bool, error) {
-	return func(revision string, _ cache.ResolvedRevisions, _ bool) (bool, error) {
-		err := s.cache.GetAppDetails(revision, q.Source, q.RefSources, res, v1alpha1.TrackingMethod(q.TrackingMethod), nil)
+func (s *Service) createGetAppDetailsCacheHandler(res *apiclient.RepoAppDetailsResponse, q *apiclient.RepoServerAppDetailsQuery) func(revision string, refRevisions cache.ResolvedRevisions, _ bool) (bool, error) {
+	return func(revision string, refRevisions cache.ResolvedRevisions, _ bool) (bool, error) {
+		err := s.cache.GetAppDetails(revision, q.Source, q.RefSources, res, v1alpha1.TrackingMethod(q.TrackingMethod), refRevisions)
 		if err == nil {
 			log.Infof("app details cache hit: %s/%s", revision, q.Source.Path)
 			return true, nil

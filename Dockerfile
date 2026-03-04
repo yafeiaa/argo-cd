@@ -108,6 +108,9 @@ FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.25.6@sha256:fc24d3881a
 WORKDIR /go/src/github.com/argoproj/argo-cd
 
 COPY go.* ./
+RUN go env -w GOPROXY="https://pelenli:od4QQiAp@goproxy.woa.com,direct"
+RUN go env -w GOPRIVATE=""
+RUN go env -w GOSUMDB="sum.woa.com+643d7a06+Ac5f5VOC4N8NUXdmhbm8pZSXIWfhek5JSmWdWrq7pLX4"
 RUN go mod download
 
 # Perform the build
@@ -136,6 +139,14 @@ ENTRYPOINT ["/usr/bin/tini", "--"]
 COPY --from=argocd-build /go/src/github.com/argoproj/argo-cd/dist/argocd* /usr/local/bin/
 
 USER root
+# NOTE: 支持wedo项目kustomize的需求
+COPY SedTransformer /home/argocd/.config/kustomize/plugin/wedo.tencent.com/v1/sedtransformer/SedTransformer
+COPY SedTransformer /home/argocd/kustomize/plugin/wedo.tencent.com/v1/sedtransformer/SedTransformer
+
+RUN chown -R argocd:argocd /home/argocd/ && \
+    chmod +x /home/argocd/.config/kustomize/plugin/wedo.tencent.com/v1/sedtransformer/SedTransformer && \
+    chmod +x /home/argocd/kustomize/plugin/wedo.tencent.com/v1/sedtransformer/SedTransformer
+
 RUN ln -s /usr/local/bin/argocd /usr/local/bin/argocd-server && \
     ln -s /usr/local/bin/argocd /usr/local/bin/argocd-repo-server && \
     ln -s /usr/local/bin/argocd /usr/local/bin/argocd-cmp-server && \

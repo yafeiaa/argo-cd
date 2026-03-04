@@ -120,6 +120,11 @@ require (
 )
 
 require (
+	github.com/ulule/deepcopier v0.0.0-20200430083143-45decc6639b6
+	go.opentelemetry.io/otel/trace v1.38.0
+)
+
+require (
 	cloud.google.com/go/auth v0.15.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.7 // indirect
 	cloud.google.com/go/compute/metadata v0.7.0 // indirect
@@ -263,7 +268,6 @@ require (
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.59.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.38.0 // indirect
 	go.opentelemetry.io/otel/metric v1.38.0 // indirect
-	go.opentelemetry.io/otel/trace v1.38.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.7.1 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
@@ -299,6 +303,9 @@ require (
 )
 
 replace (
+	// 使用内部版本的 gitops-engine
+	github.com/argoproj/gitops-engine => git.woa.com/bk-powerapp/gitops-engine v0.7.1-0.20260305033235-8341756dd1b3
+
 	github.com/golang/protobuf => github.com/golang/protobuf v1.5.4
 	github.com/grpc-ecosystem/grpc-gateway => github.com/grpc-ecosystem/grpc-gateway v1.16.0
 	golang.org/x/tools => golang.org/x/tools v0.35.0

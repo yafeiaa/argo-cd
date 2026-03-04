@@ -1194,23 +1194,47 @@ func (server *ArgoCDServer) newHTTPServer(ctx context.Context, port int, grpcWeb
 	// we use our own Marshaler
 	gwMuxOpts := runtime.WithMarshalerOption(runtime.MIMEWildcard, new(grpc_util.JSONMarshaler))
 	gwCookieOpts := runtime.WithForwardResponseOption(server.translateGrpcCookieHeader)
-	gwmux := runtime.NewServeMux(gwMuxOpts, gwCookieOpts)
+	customMatcher := func(key string) (string, bool) {
+		switch strings.ToLower(key) {
+		case "baggage", "traceparent", "tracestate":
+			log.Warnf("Forwarding header: %s", key)
+			return key, true
+		default:
+			return runtime.DefaultHeaderMatcher(key)
+		}
+	}
+	gwHeaderMatcherOpts := runtime.WithIncomingHeaderMatcher(customMatcher)
+	gwmux := runtime.NewServeMux(gwMuxOpts, gwCookieOpts, gwHeaderMatcherOpts)
 
 	var handler http.Handler = gwmux
 	if server.EnableGZip {
 		handler = compressHandler(handler)
 	}
-	// withTracingHandler is a middleware that extracts OpenTelemetry trace context from HTTP headers
-	// and injects it into the request context. This enables trace context propagation from HTTP clients
-	// to gRPC services, allowing for better distributed tracing across the ArgoCD server.
-	withTracingHandler := func(h http.Handler) http.Handler {
+	// Middleware for OpenTelemetry propagation
+	withTracing := func(h http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Based on https://github.com/grpc-ecosystem/grpc-gateway/issues/470, the Go context is not propagated
+			// through the grpc-gateway. Instead, we must pass information via headers that are configured to be
+			// forwarded. The 'baggage' header is already configured for this.
+
+			// The incoming baggage header can have a non-standard format like `[X-User=yovafeng]`.
+			// This middleware's job is to clean it up into a standard comma-separated list
+			// so that it can be correctly processed by grpc-gateway and downstream services.
+			if b := r.Header.Get("baggage"); b != "" {
+				cleanedBaggage := strings.Trim(strings.Trim(strings.TrimSpace(b), "["), "]")
+				if cleanedBaggage != b {
+					log.Warnf("Cleaned up baggage header from '%s' to '%s'", b, cleanedBaggage)
+					r.Header.Set("baggage", cleanedBaggage)
+				}
+			}
+
+			// We also propagate the OTel trace context, which is standard practice.
 			propagator := otel.GetTextMapPropagator()
 			ctx := propagator.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
 			h.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
-	handler = withTracingHandler(handler)
+	handler = withTracing(handler) // 添加追踪中间件
 	if len(server.ContentTypes) > 0 {
 		handler = enforceContentTypes(handler, server.ContentTypes)
 	} else {

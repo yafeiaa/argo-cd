@@ -50,6 +50,7 @@ import (
 	hydratortypes "github.com/argoproj/argo-cd/v3/controller/hydrator/types"
 	"github.com/argoproj/argo-cd/v3/controller/metrics"
 	"github.com/argoproj/argo-cd/v3/controller/sharding"
+	pkgapiclient "github.com/argoproj/argo-cd/v3/pkg/apiclient"
 	"github.com/argoproj/argo-cd/v3/pkg/apis/application"
 	appv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	appclientset "github.com/argoproj/argo-cd/v3/pkg/client/clientset/versioned"
@@ -145,6 +146,8 @@ type ApplicationController struct {
 	dynamicClusterDistributionEnabled bool
 	deploymentInformer                informerv1.DeploymentInformer
 
+	appFinalizeChecker AppFinalizeChecker
+
 	hydrator *hydrator.Hydrator
 }
 
@@ -155,6 +158,7 @@ func NewApplicationController(
 	kubeClientset kubernetes.Interface,
 	applicationClientset appclientset.Interface,
 	repoClientset apiclient.Clientset,
+	argoServerClient pkgapiclient.Client,
 	commitClientset commitclient.Clientset,
 	argoCache *appstatecache.Cache,
 	kubectl kube.Kubectl,
@@ -330,6 +334,7 @@ func NewApplicationController(
 	}
 	stateCache := statecache.NewLiveStateCache(db, appInformer, ctrl.settingsMgr, ctrl.metricsServer, ctrl.handleObjectUpdated, clusterSharding, argo.NewResourceTracking())
 	appStateManager := NewAppStateManager(db, applicationClientset, repoClientset, namespace, kubectl, ctrl.onKubectlRun, ctrl.settingsMgr, stateCache, ctrl.metricsServer, argoCache, ctrl.statusRefreshTimeout, argo.NewResourceTracking(), persistResourceHealth, repoErrorGracePeriod, serverSideDiff, ignoreNormalizerOpts)
+	ctrl.appFinalizeChecker = NewAppFinalizeChecker(argoServerClient)
 	ctrl.appInformer = appInformer
 	ctrl.appLister = appLister
 	ctrl.projInformer = projInformer
@@ -2145,6 +2150,14 @@ func (ctrl *ApplicationController) autoSync(app *appv1.Application, syncStatus *
 			logCtx.Infof("Skipping auto-sync: need to prune extra resources only but automated prune is disabled")
 			return nil, 0
 		}
+	}
+
+	// Application controlled-by appset may trigger two-updates, when appset.template have dynamic revision.
+	// One is application self-sync, two is appset refresh application triggered app sync.
+	// When application auto-sync, check whether the application has reached the finalized state.
+	if err := ctrl.appFinalizeChecker.CheckAppRefreshedByAppSet(logCtx, context.Background(), app); err != nil {
+		logCtx.Infof("Skipping auto-sync: app control by appset not update to latest: %s", err.Error())
+		return nil, 0
 	}
 
 	source := ptr.To(app.Spec.GetSource())

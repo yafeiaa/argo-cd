@@ -389,8 +389,32 @@ func (s *Server) GetAppDetails(ctx context.Context, q *repositorypkg.RepoAppDeta
 
 	refSources := make(v1alpha1.RefTargetRevisionMapping)
 	if app != nil && app.Spec.HasMultipleSources() {
+		var revisions []string
+		appSources := app.Spec.GetSources()
+		isInAppSources := false
+		for _, s := range appSources {
+			if q.Source.Equals(&s) {
+				isInAppSources = true
+				break
+			}
+		}
+
+		if isInAppSources {
+			for _, s := range appSources {
+				revisions = append(revisions, s.TargetRevision)
+			}
+		} else {
+			// 否则从历史记录中获取修订版本
+			for _, h := range app.Status.History {
+				if h.ID == int64(q.VersionId) {
+					if h.Revisions != nil {
+						revisions = h.Revisions
+					}
+				}
+			}
+		}
 		// Store the map of all sources having ref field into a map for applications with sources field
-		refSources, err = argo.GetRefSources(ctx, app.Spec.Sources, q.AppProject, s.db.GetRepository, []string{})
+		refSources, err = argo.GetRefSources(ctx, app.Spec.Sources, q.AppProject, s.db.GetRepository, revisions)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get ref sources: %w", err)
 		}

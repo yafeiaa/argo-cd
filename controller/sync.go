@@ -17,6 +17,7 @@ import (
 	"github.com/argoproj/gitops-engine/pkg/sync"
 	"github.com/argoproj/gitops-engine/pkg/sync/common"
 	"github.com/argoproj/gitops-engine/pkg/utils/kube"
+	"github.com/argoproj/gitops-engine/pkg/utils/tracing"
 	jsonpatch "github.com/evanphx/json-patch"
 	log "github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -30,14 +31,17 @@ import (
 	"github.com/argoproj/argo-cd/v3/controller/metrics"
 	"github.com/argoproj/argo-cd/v3/controller/syncid"
 	"github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
-	applog "github.com/argoproj/argo-cd/v3/util/app/log"
 	"github.com/argoproj/argo-cd/v3/util/argo"
 	"github.com/argoproj/argo-cd/v3/util/argo/diff"
+	"github.com/argoproj/argo-cd/v3/util/env"
 	"github.com/argoproj/argo-cd/v3/util/glob"
 	kubeutil "github.com/argoproj/argo-cd/v3/util/kube"
 	logutils "github.com/argoproj/argo-cd/v3/util/log"
 	"github.com/argoproj/argo-cd/v3/util/lua"
+	traceutil "github.com/argoproj/argo-cd/v3/util/trace"
 )
+
+var syncTracingEnabled = env.ParseBoolFromEnv(cdcommon.EnvSyncTracingEnabled, false)
 
 const (
 	// EnvVarSyncWaveDelay is an environment variable which controls the delay in seconds between
@@ -124,7 +128,30 @@ func (m *appStateManager) SyncAppState(app *v1alpha1.Application, project *v1alp
 		state.Message = fmt.Sprintf("Failed to generate sync ID: %v", err)
 		return
 	}
-	logEntry := log.WithFields(applog.GetAppLogFields(app)).WithField("syncId", syncId)
+
+	// Initialize tracer early to get traceID for all logs
+	var syncTracer tracing.Tracer
+	if syncTracingEnabled {
+		syncTracer = tracing.NewOpenTelemetryTracer(traceutil.GetTracer("application-sync-operation"))
+	} else {
+		// if tracing is not enabled, use a no-op tracer, no-op tracer does not create any spans
+		syncTracer = tracing.NopTracer{}
+	}
+	rootSyncTraceSpan := syncTracer.StartSpan("appOperation")
+	defer rootSyncTraceSpan.Finish()
+	syncTraceID := rootSyncTraceSpan.TraceID()
+	syncSpanID := rootSyncTraceSpan.SpanID()
+	// set traceid to operationState
+	if state.SyncTraceID == "" {
+		state.SyncTraceID = syncTraceID
+		state.SyncSpanID = syncSpanID
+	} else {
+		syncTraceID = state.SyncTraceID
+		syncSpanID = state.SyncSpanID
+	}
+
+	// Create logEntry with synctraceid from the beginning
+	logEntry := log.WithFields(log.Fields{"application": app.QualifiedName(), "syncId": syncId, "synctraceid": syncTraceID})
 
 	if state.Operation.Sync == nil {
 		state.Phase = common.OperationError
@@ -273,18 +300,18 @@ func (m *appStateManager) SyncAppState(app *v1alpha1.Application, project *v1alp
 
 	installationID, err := m.settingsMgr.GetInstallationID()
 	if err != nil {
-		log.Errorf("Could not get installation ID: %v", err)
+		logEntry.Errorf("Could not get installation ID: %v", err)
 		return
 	}
 	trackingMethod, err := m.settingsMgr.GetTrackingMethod()
 	if err != nil {
-		log.Errorf("Could not get trackingMethod: %v", err)
+		logEntry.Errorf("Could not get trackingMethod: %v", err)
 		return
 	}
 
 	impersonationEnabled, err := m.settingsMgr.IsImpersonationEnabled()
 	if err != nil {
-		log.Errorf("could not get impersonation feature flag: %v", err)
+		logEntry.Errorf("could not get impersonation feature flag: %v", err)
 		return
 	}
 	if impersonationEnabled {
@@ -361,6 +388,9 @@ func (m *appStateManager) SyncAppState(app *v1alpha1.Application, project *v1alp
 		m.kubectl,
 		app.Spec.Destination.Namespace,
 		openAPISchema,
+		syncTracer,
+		syncTraceID,
+		syncSpanID,
 		opts...,
 	)
 	if err != nil {
@@ -399,7 +429,7 @@ func (m *appStateManager) SyncAppState(app *v1alpha1.Application, project *v1alp
 		})
 
 		if err != nil {
-			log.Errorf("using the original message since: %v", err)
+			logEntry.Errorf("using the original message since: %v", err)
 		} else {
 			res.Message = augmentedMsg
 		}
@@ -421,8 +451,20 @@ func (m *appStateManager) SyncAppState(app *v1alpha1.Application, project *v1alp
 
 	logEntry.WithField("duration", time.Since(start)).Info("sync/terminate complete")
 
-	if !syncOp.DryRun && len(syncOp.Resources) == 0 && state.Phase.Successful() {
-		err := m.persistRevisionHistory(app, compareResult.syncStatus.Revision, compareResult.syncStatus.ComparedTo.Source, compareResult.syncStatus.Revisions, compareResult.syncStatus.ComparedTo.Sources, isMultiSourceSync, state.StartedAt, state.Operation.InitiatedBy)
+	// NOTE: --story=121850163 部署历史增加部署失败/部分同步的记录
+	if !syncOp.DryRun && !state.Phase.Running() {
+		// if !syncOp.DryRun && len(syncOp.Resources) == 0 && state.Phase.Successful() {
+		err := m.persistRevisionHistory(
+			app, compareResult.syncStatus.Revision,
+			compareResult.syncStatus.ComparedTo.Source,
+			compareResult.syncStatus.Revisions,
+			compareResult.syncStatus.ComparedTo.Sources,
+			isMultiSourceSync, state.StartedAt,
+			state.Operation.InitiatedBy,
+			state.SyncTraceID,
+			state.Phase,
+			state.Message,
+		)
 		if err != nil {
 			state.Phase = common.OperationError
 			state.Message = fmt.Sprintf("failed to record sync to history: %v", err)

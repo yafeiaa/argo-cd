@@ -1062,6 +1062,9 @@ func (m *appStateManager) persistRevisionHistory(
 	hasMultipleSources bool,
 	startedAt metav1.Time,
 	initiatedBy v1alpha1.OperationInitiator,
+	syncTraceid string,
+	phase synccommon.OperationPhase,
+	message string,
 ) error {
 	var nextID int64
 	if len(app.Status.History) > 0 {
@@ -1076,6 +1079,9 @@ func (m *appStateManager) persistRevisionHistory(
 			Sources:         sources,
 			Revisions:       revisions,
 			InitiatedBy:     initiatedBy,
+			SyncTraceID:     syncTraceid,
+			Phase:           phase,
+			Message:         message,
 		})
 	} else {
 		app.Status.History = append(app.Status.History, v1alpha1.RevisionHistory{
@@ -1085,6 +1091,9 @@ func (m *appStateManager) persistRevisionHistory(
 			ID:              nextID,
 			Source:          source,
 			InitiatedBy:     initiatedBy,
+			SyncTraceID:     syncTraceid,
+			Phase:           phase,
+			Message:         message,
 		})
 	}
 

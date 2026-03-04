@@ -1547,3 +1547,255 @@ func TestManifestHash(t *testing.T) {
 	assert.Equal(t, expected, hash)
 	assert.NoError(t, err)
 }
+
+func TestPopulateDeploymentInfo(t *testing.T) {
+	tests := []struct {
+		name     string
+		manifest string
+		expected []v1alpha1.InfoItem
+	}{
+		{
+			name: "Deployment updating",
+			manifest: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-deployment
+spec:
+  replicas: 5
+status:
+  replicas: 5
+  updatedReplicas: 3
+  readyReplicas: 3
+  availableReplicas: 3
+`,
+			expected: []v1alpha1.InfoItem{
+				{Name: "ready", Value: "3/5"},
+				{Name: "up-to-date", Value: "3"},
+				{Name: "available", Value: "3"},
+			},
+		},
+		{
+			name: "Deployment fully updated",
+			manifest: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-deployment
+spec:
+  replicas: 5
+status:
+  replicas: 5
+  updatedReplicas: 5
+  readyReplicas: 5
+  availableReplicas: 5
+`,
+			expected: []v1alpha1.InfoItem{
+				{Name: "ready", Value: "5/5"},
+				{Name: "up-to-date", Value: "5"},
+				{Name: "available", Value: "5"},
+			},
+		},
+		{
+			name: "Deployment without status",
+			manifest: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-deployment
+spec:
+  replicas: 3
+`,
+			expected: []v1alpha1.InfoItem{
+				{Name: "ready", Value: "0/3"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			un := strToUnstructured(tt.manifest)
+			res := &ResourceInfo{}
+			populateDeploymentInfo(un, res)
+			assert.Equal(t, tt.expected, res.Info)
+		})
+	}
+}
+
+func TestPopulateStatefulSetInfo(t *testing.T) {
+	tests := []struct {
+		name     string
+		manifest string
+		expected []v1alpha1.InfoItem
+	}{
+		{
+			name: "StatefulSet updating",
+			manifest: `
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: test-statefulset
+spec:
+  replicas: 3
+status:
+  readyReplicas: 2
+  currentReplicas: 1
+  updatedReplicas: 2
+`,
+			expected: []v1alpha1.InfoItem{
+				{Name: "ready", Value: "2/3"},
+				{Name: "up-to-date", Value: "2"},
+			},
+		},
+		{
+			name: "StatefulSet fully updated",
+			manifest: `
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: test-statefulset
+spec:
+  replicas: 3
+status:
+  readyReplicas: 3
+  currentReplicas: 3
+  updatedReplicas: 3
+`,
+			expected: []v1alpha1.InfoItem{
+				{Name: "ready", Value: "3/3"},
+				{Name: "up-to-date", Value: "3"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			un := strToUnstructured(tt.manifest)
+			res := &ResourceInfo{}
+			populateStatefulSetInfo(un, res)
+			assert.Equal(t, tt.expected, res.Info)
+		})
+	}
+}
+
+func TestPopulateDaemonSetInfo(t *testing.T) {
+	tests := []struct {
+		name     string
+		manifest string
+		expected []v1alpha1.InfoItem
+	}{
+		{
+			name: "DaemonSet updating",
+			manifest: `
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: test-daemonset
+status:
+  desiredNumberScheduled: 10
+  currentNumberScheduled: 8
+  updatedNumberScheduled: 7
+  numberReady: 7
+  numberAvailable: 7
+`,
+			expected: []v1alpha1.InfoItem{
+				{Name: "desired", Value: "10"},
+				{Name: "ready", Value: "7"},
+				{Name: "up-to-date", Value: "7"},
+				{Name: "available", Value: "7"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			un := strToUnstructured(tt.manifest)
+			res := &ResourceInfo{}
+			populateDaemonSetInfo(un, res)
+			assert.Equal(t, tt.expected, res.Info)
+		})
+	}
+}
+
+func TestPopulateGameDeploymentInfo(t *testing.T) {
+	tests := []struct {
+		name     string
+		manifest string
+		expected []v1alpha1.InfoItem
+	}{
+		{
+			name: "GameDeployment updating",
+			manifest: `
+apiVersion: game.kruise.io/v1alpha1
+kind: GameDeployment
+metadata:
+  name: test-gamedeployment
+spec:
+  replicas: 5
+status:
+  replicas: 4
+  readyReplicas: 3
+  updatedReplicas: 3
+  updatedReadyReplicas: 3
+`,
+			expected: []v1alpha1.InfoItem{
+				{Name: "desired", Value: "5"},
+				{Name: "updated", Value: "3"},
+				{Name: "updated-ready", Value: "3"},
+				{Name: "ready", Value: "3"},
+				{Name: "total", Value: "4"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			un := strToUnstructured(tt.manifest)
+			res := &ResourceInfo{}
+			populateGameDeploymentInfo(un, res)
+			assert.Equal(t, tt.expected, res.Info)
+		})
+	}
+}
+
+func TestPopulateGameStatefulSetInfo(t *testing.T) {
+	tests := []struct {
+		name     string
+		manifest string
+		expected []v1alpha1.InfoItem
+	}{
+		{
+			name: "GameStatefulSet updating",
+			manifest: `
+apiVersion: game.kruise.io/v1alpha1
+kind: GameStatefulSet
+metadata:
+  name: test-gamestatefulset
+spec:
+  replicas: 3
+status:
+  replicas: 2
+  readyReplicas: 2
+  currentReplicas: 1
+  updatedReplicas: 2
+  updatedReadyReplicas: 1
+`,
+			expected: []v1alpha1.InfoItem{
+				{Name: "replicas", Value: "2"},
+				{Name: "ready-replicas", Value: "2"},
+				{Name: "current-replicas", Value: "1"},
+				{Name: "updated-replicas", Value: "2"},
+				{Name: "updated-ready-replicas", Value: "1"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			un := strToUnstructured(tt.manifest)
+			res := &ResourceInfo{}
+			populateGameStatefulSetInfo(un, res)
+			assert.Equal(t, tt.expected, res.Info)
+		})
+	}
+}
