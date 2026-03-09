@@ -116,8 +116,8 @@ RUN go mod download
 # Perform the build
 COPY . .
 COPY --from=argocd-ui /src/dist/app /go/src/github.com/argoproj/argo-cd/ui/dist/app
-ARG TARGETOS \
-    TARGETARCH
+ARG TARGETOS
+ARG TARGETARCH
 # These build args are optional; if not specified the defaults will be taken from the Makefile
 ARG GIT_TAG
 ARG BUILD_DATE
