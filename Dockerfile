@@ -119,10 +119,11 @@ COPY --from=argocd-ui /src/dist/app /go/src/github.com/argoproj/argo-cd/ui/dist/
 ARG TARGETOS \
     TARGETARCH
 # These build args are optional; if not specified the defaults will be taken from the Makefile
-ARG GIT_TAG \
-    BUILD_DATE \
-    GIT_TREE_STATE \
-    GIT_COMMIT
+ARG GIT_TAG
+ARG BUILD_DATE
+ARG GIT_TREE_STATE
+ARG GIT_COMMIT
+
 RUN GIT_COMMIT=$GIT_COMMIT \
     GIT_TREE_STATE=$GIT_TREE_STATE \
     GIT_TAG=$GIT_TAG \
