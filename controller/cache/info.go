@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -488,6 +489,130 @@ func populatePodInfo(un *unstructured.Unstructured, res *ResourceInfo) {
 	if restarts > 0 {
 		res.Info = append(res.Info, v1alpha1.InfoItem{Name: "Restart Count", Value: strconv.Itoa(restarts)})
 	}
+
+	// === 新增 Pod 详细信息开始 ===
+
+	// 1. Pod 基础信息
+	res.Info = append(res.Info, v1alpha1.InfoItem{Name: "name", Value: pod.Name})
+	res.Info = append(res.Info, v1alpha1.InfoItem{Name: "namespace", Value: pod.Namespace})
+
+	// 2. gameDeployment索引 ID（从 annotations 取）
+	if gameDeploymentIndexID, ok := pod.Annotations["tkex.bkbcs.tencent.com/gamedeployment-index-id"]; ok && gameDeploymentIndexID != "" {
+		res.Info = append(res.Info, v1alpha1.InfoItem{Name: "gamedeploymentIndexId", Value: gameDeploymentIndexID})
+	}
+
+	// 3. Pod IP
+	if pod.Status.PodIP != "" {
+		res.Info = append(res.Info, v1alpha1.InfoItem{Name: "podIP", Value: pod.Status.PodIP})
+	}
+
+	// 4. 容器状态（序列化为 JSON 数组）
+	type ContainerStateRunning struct {
+		StartedAt string `json:"startedAt,omitempty"`
+	}
+
+	type ContainerStateWaiting struct {
+		Reason  string `json:"reason,omitempty"`
+		Message string `json:"message,omitempty"`
+	}
+
+	type ContainerStateTerminated struct {
+		ExitCode   int32  `json:"exitCode"`
+		Signal     int32  `json:"signal,omitempty"`
+		Reason     string `json:"reason,omitempty"`
+		Message    string `json:"message,omitempty"`
+		StartedAt  string `json:"startedAt,omitempty"`
+		FinishedAt string `json:"finishedAt,omitempty"`
+	}
+
+	type ContainerStatus struct {
+		Name         string                   `json:"name"`
+		RestartCount int32                    `json:"restartCount"`
+		Image        string                   `json:"image"`
+		Ready        bool                     `json:"ready"`
+		State        map[string]interface{}   `json:"state"`
+	}
+
+	containerStatuses := make([]ContainerStatus, 0, len(pod.Status.ContainerStatuses))
+	for _, cs := range pod.Status.ContainerStatuses {
+		state := make(map[string]interface{})
+		switch {
+		case cs.State.Running != nil:
+			running := ContainerStateRunning{}
+			if !cs.State.Running.StartedAt.IsZero() {
+				running.StartedAt = cs.State.Running.StartedAt.Format("2006-01-02T15:04:05Z")
+			}
+			state["running"] = running
+		case cs.State.Waiting != nil:
+			waiting := ContainerStateWaiting{
+				Reason:  cs.State.Waiting.Reason,
+				Message: cs.State.Waiting.Message,
+			}
+			state["waiting"] = waiting
+		case cs.State.Terminated != nil:
+			terminated := ContainerStateTerminated{
+				ExitCode:   cs.State.Terminated.ExitCode,
+				Signal:     cs.State.Terminated.Signal,
+				Reason:     cs.State.Terminated.Reason,
+				Message:    cs.State.Terminated.Message,
+			}
+			if !cs.State.Terminated.StartedAt.IsZero() {
+				terminated.StartedAt = cs.State.Terminated.StartedAt.Format("2006-01-02T15:04:05Z")
+			}
+			if !cs.State.Terminated.FinishedAt.IsZero() {
+				terminated.FinishedAt = cs.State.Terminated.FinishedAt.Format("2006-01-02T15:04:05Z")
+			}
+			state["terminated"] = terminated
+		}
+
+		containerStatuses = append(containerStatuses, ContainerStatus{
+			Name:         cs.Name,
+			RestartCount: cs.RestartCount,
+			Image:        cs.Image,
+			Ready:        cs.Ready,
+			State:        state,
+		})
+	}
+
+	if len(containerStatuses) > 0 {
+		csJSON, _ := json.Marshal(containerStatuses)
+		res.Info = append(res.Info, v1alpha1.InfoItem{
+			Name:  "containerStatuses",
+			Value: string(csJSON),
+		})
+	}
+
+	// 5. Pod conditions（只保留异常时的 reason/message，减少数据量）
+	type PodCondition struct {
+		Type    string `json:"type"`
+		Status  string `json:"status"`
+		Reason  string `json:"reason,omitempty"`
+		Message string `json:"message,omitempty"`
+	}
+
+	conditions := make([]PodCondition, 0, len(pod.Status.Conditions))
+	for _, cond := range pod.Status.Conditions {
+		pc := PodCondition{
+			Type:   string(cond.Type),
+			Status: string(cond.Status),
+		}
+		// 只有异常状态（不为 True）才加 reason 和 message
+		if cond.Status != v1.ConditionTrue {
+			pc.Reason = cond.Reason
+			pc.Message = cond.Message
+		}
+		conditions = append(conditions, pc)
+	}
+
+	if len(conditions) > 0 {
+		condJSON, _ := json.Marshal(conditions)
+		res.Info = append(res.Info, v1alpha1.InfoItem{
+			Name:  "conditions",
+			Value: string(condJSON),
+		})
+	}
+
+	// === 新增 Pod 详细信息结束 ===
 
 	var urls []string
 	if res.NetworkingInfo != nil {
