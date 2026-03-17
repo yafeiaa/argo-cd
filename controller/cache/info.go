@@ -506,7 +506,12 @@ func populatePodInfo(un *unstructured.Unstructured, res *ResourceInfo) {
 		res.Info = append(res.Info, v1alpha1.InfoItem{Name: "podIP", Value: pod.Status.PodIP})
 	}
 
-	// 4. 容器状态（序列化为 JSON 数组）
+	// 4. pod deletionTimestamp
+	if pod.DeletionTimestamp != nil {
+		res.Info = append(res.Info, v1alpha1.InfoItem{Name: "deletionTimestamp", Value: pod.DeletionTimestamp.Format("2006-01-02T15:04:05Z")})
+	}
+
+	// 5. 容器状态（序列化为 JSON 数组）
 	type ContainerStateRunning struct {
 		StartedAt string `json:"startedAt,omitempty"`
 	}
@@ -586,7 +591,7 @@ func populatePodInfo(un *unstructured.Unstructured, res *ResourceInfo) {
 		})
 	}
 
-	// 5. Pod conditions（只保留异常时的 reason/message，减少数据量）
+	// 6. Pod conditions（只保留异常时的 reason/message，减少数据量）
 	type PodCondition struct {
 		Type    string `json:"type"`
 		Status  string `json:"status"`
