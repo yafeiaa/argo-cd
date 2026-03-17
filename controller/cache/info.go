@@ -526,11 +526,14 @@ func populatePodInfo(un *unstructured.Unstructured, res *ResourceInfo) {
 	}
 
 	type ContainerStatus struct {
-		Name         string                   `json:"name"`
-		RestartCount int32                    `json:"restartCount"`
-		Image        string                   `json:"image"`
-		Ready        bool                     `json:"ready"`
-		State        map[string]interface{}   `json:"state"`
+		Name         string                 `json:"name"`
+		RestartCount int32                  `json:"restartCount"`
+		Image        string                 `json:"image"`
+		Ready        bool                   `json:"ready"`
+		State        map[string]interface{} `json:"state"`
+		ImageID      string                 `json:"imageID"`
+		ContainerID  string                 `json:"containerID"`
+		Started      bool                   `json:"started"`
 	}
 
 	containerStatuses := make([]ContainerStatus, 0, len(pod.Status.ContainerStatuses))
@@ -551,10 +554,10 @@ func populatePodInfo(un *unstructured.Unstructured, res *ResourceInfo) {
 			state["waiting"] = waiting
 		case cs.State.Terminated != nil:
 			terminated := ContainerStateTerminated{
-				ExitCode:   cs.State.Terminated.ExitCode,
-				Signal:     cs.State.Terminated.Signal,
-				Reason:     cs.State.Terminated.Reason,
-				Message:    cs.State.Terminated.Message,
+				ExitCode: cs.State.Terminated.ExitCode,
+				Signal:   cs.State.Terminated.Signal,
+				Reason:   cs.State.Terminated.Reason,
+				Message:  cs.State.Terminated.Message,
 			}
 			if !cs.State.Terminated.StartedAt.IsZero() {
 				terminated.StartedAt = cs.State.Terminated.StartedAt.Format("2006-01-02T15:04:05Z")
@@ -571,6 +574,9 @@ func populatePodInfo(un *unstructured.Unstructured, res *ResourceInfo) {
 			Image:        cs.Image,
 			Ready:        cs.Ready,
 			State:        state,
+			ImageID:      cs.ImageID,
+			ContainerID:  cs.ContainerID,
+			Started:      cs.Started,
 		})
 	}
 
@@ -701,6 +707,7 @@ func populateDeploymentInfo(un *unstructured.Unstructured, res *ResourceInfo) {
 
 	res.Info = append(res.Info, infoItems...)
 }
+
 // populateStatefulSetInfo 填充 StatefulSet 的更新进度信息
 func populateStatefulSetInfo(un *unstructured.Unstructured, res *ResourceInfo) {
 	replicas := getInt64Field(un, "spec", "replicas")
