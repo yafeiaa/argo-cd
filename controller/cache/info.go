@@ -531,9 +531,8 @@ func populatePodInfo(un *unstructured.Unstructured, res *ResourceInfo) {
 		Image        string                 `json:"image"`
 		Ready        bool                   `json:"ready"`
 		State        map[string]interface{} `json:"state"`
-		ImageID      string                 `json:"imageID"`
 		ContainerID  string                 `json:"containerID"`
-		Started      bool                   `json:"started"`
+		LastState    map[string]interface{} `json:"lastState"`
 	}
 
 	containerStatuses := make([]ContainerStatus, 0, len(pod.Status.ContainerStatuses))
@@ -574,9 +573,8 @@ func populatePodInfo(un *unstructured.Unstructured, res *ResourceInfo) {
 			Image:        cs.Image,
 			Ready:        cs.Ready,
 			State:        state,
-			ImageID:      cs.ImageID,
 			ContainerID:  cs.ContainerID,
-			Started:      cs.Started,
+			LastState:    cs.LastState,
 		})
 	}
 
